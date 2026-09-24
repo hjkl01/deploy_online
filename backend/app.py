@@ -219,9 +219,9 @@ async def run(i):
     if step_failed:
      ok=False;code=step_code
      if not s.continue_on_error:break
+   await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
    await finish(i,"success" if ok else "failed",code)
    finished=True
-   await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
   except asyncio.CancelledError:
    if not finished:
     await finish(i,"failed",130)
