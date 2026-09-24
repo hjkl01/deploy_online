@@ -3,7 +3,7 @@
 import {useEffect,useState} from "react";
 import {useRouter} from "next/navigation";
 
-const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
+const API=process.env.NEXT_PUBLIC_API_URL||"";
 const emptyStep={name:"",step_type:"command",cwd:"~/",command:"",enabled:true,timeout:3600,continue_on_error:false};
 
 export default function Edit(){
