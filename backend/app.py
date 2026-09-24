@@ -67,8 +67,11 @@ def role(*roles):
  return dep
 def check(x):
  if x.shell not in ("bash","zsh"):raise HTTPException(400,"shell 只能是 bash 或 zsh")
+ home=Path.home().resolve()
  for s in x.steps:
   if not s.cwd.startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
+  target=(home / s.cwd[2:]).resolve()
+  if target != home and home not in target.parents:raise HTTPException(400,"cwd 不能越出用户家目录")
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
@@ -100,7 +103,12 @@ def update(pid:int,x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))
  if not p:raise HTTPException(404,"项目不存在")
  p.name=x.name;p.description=x.description;p.branch=x.branch;p.shell=x.shell;p.enabled=x.enabled;d.query(Step).filter_by(project_id=pid).delete();d.query(Env).filter_by(project_id=pid).delete()
  for i,s in enumerate(x.steps):d.add(Step(project_id=pid,position=i,**s.model_dump()))
- for e in x.environment:d.add(Env(project_id=pid,**e.model_dump()))
+ existing_secret={e.key:e for e in d.query(Env).filter_by(project_id=pid,is_secret=True).all()}
+ for e in x.environment:
+  data=e.model_dump()
+  if data["is_secret"] and data["value"]=="" and data["key"] in existing_secret:
+   data["value"]=existing_secret[data["key"]].value
+  d.add(Env(project_id=pid,**data))
  d.commit();return po(p)
 @app.delete("/api/projects/{pid}")
 def delete(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin"))):
