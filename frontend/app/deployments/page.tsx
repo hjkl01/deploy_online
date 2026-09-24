@@ -1,13 +1,14 @@
 "use client";
 
 import {useEffect,useState} from "react";
-import {useSearchParams} from "next/navigation";
+
 
 const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
 const WS=process.env.NEXT_PUBLIC_WS_URL||"ws://localhost:8000";
 
 export default function Page(){
- const params=useSearchParams(); const id=params.get("id"); const[logs,setLogs]=useState(""); const[status,setStatus]=useState("");
+ const[id,setId]=useState<string|null>(null); const[logs,setLogs]=useState(""); const[status,setStatus]=useState("");
+ useEffect(()=>{setId(new URLSearchParams(window.location.search).get("id"))},[]);
  useEffect(()=>{if(!id)return;let socket:WebSocket|undefined;let cancelled=false;
  fetch(API+"/api/deployments/"+id+"/logs",{credentials:"include"}).then(r=>r.json()).then(data=>setLogs(data.map((item:any)=>item.message).join("")));
  fetch(API+"/api/deployments/"+id,{credentials:"include"}).then(r=>r.json()).then(data=>setStatus(data.status));
