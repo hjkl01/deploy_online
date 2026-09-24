@@ -74,7 +74,7 @@ def check(x):
   target=(home / relative).resolve()
   if target != home and home not in target.parents:raise HTTPException(400,"cwd 不能越出用户家目录")
  for e in x.environment:
-  if not e.key or "=" in e.key or "\\x00" in e.key:raise HTTPException(400,"环境变量名无效")
+  if not e.key or "=" in e.key or "\x00" in e.key:raise HTTPException(400,"环境变量名无效")
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
