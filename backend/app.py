@@ -4,6 +4,8 @@ from pathlib import Path
 from collections import defaultdict
 import yaml
 from fastapi import FastAPI,Depends,HTTPException,Request,WebSocket,WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel,Field
@@ -39,7 +41,10 @@ class StepIn(BaseModel):
 class EnvIn(BaseModel):key:str;value:str="";is_secret:bool=False
 class ProjectIn(BaseModel):
  name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=[];environment:list[EnvIn]=[]
-app=FastAPI(title="deploy_online");app.add_middleware(SessionMiddleware,secret_key=settings.secret_key)
+app=FastAPI(title="deploy_online");
+STATIC_DIR=Path(__file__).resolve().parent/"static"
+if STATIC_DIR.is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
+app.add_middleware(SessionMiddleware,secret_key=settings.secret_key)
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 locks=defaultdict(asyncio.Lock);queues=defaultdict(set)
 def dbdep():
@@ -62,6 +67,17 @@ def check(x):
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
+@app.get("/{path:path}")
+def frontend(path:str):
+ if path.startswith(("api/","ws/","health","_next/")): raise HTTPException(404,"Not Found")
+ target=STATIC_DIR/path
+ if target.is_file(): return FileResponse(target)
+ html=target/"index.html"
+ if html.is_file(): return FileResponse(html)
+ index=STATIC_DIR/"index.html"
+ if index.is_file(): return FileResponse(index)
+ raise HTTPException(404,"前端文件不存在")
+
 @app.post("/api/auth/login")
 def login(x:Login,request:Request,d:Session=Depends(dbdep)):
  u=d.query(User).filter_by(username=x.username).first()
