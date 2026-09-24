@@ -215,17 +215,23 @@ async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operat
  if locks[pid].locked():raise HTTPException(409,"该项目正在部署")
  j=Deployment(project_id=pid,user_id=u.id);d.add(j);d.commit();d.refresh(j);asyncio.create_task(run(j.id));return {"id":j.id,"status":"pending"}
 @app.get("/api/deployments")
-def deployments(project_id:int|None=None,d:Session=Depends(dbdep),u=Depends(user)):
+def deployments(project_id:int|None=None,status:str|None=None,page:int=1,page_size:int=20,d:Session=Depends(dbdep),u=Depends(user)):
+ page=max(1,page);page_size=max(1,min(page_size,100))
  q=d.query(Deployment,Project.name,User.username).outerjoin(Project,Project.id==Deployment.project_id).outerjoin(User,User.id==Deployment.user_id)
  if project_id is not None:q=q.filter(Deployment.project_id==project_id)
- rows=q.order_by(Deployment.id.desc()).limit(200).all()
- return [{"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at} for j,project_name,username in rows]
+ if status is not None:
+  if status not in ("pending","running","success","failed"):raise HTTPException(400,"状态无效")
+  q=q.filter(Deployment.status==status)
+ total=q.count()
+ rows=q.order_by(Deployment.id.desc()).offset((page-1)*page_size).limit(page_size).all()
+ return {"total":total,"page":page,"page_size":page_size,"items":[{"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at} for j,project_name,username in rows]}
 
 @app.get("/api/deployments/{did}")
 def deployment(did:int,d:Session=Depends(dbdep),u=Depends(user)):
- j=d.get(Deployment,did)
- if not j:raise HTTPException(404,"部署不存在")
- return {"id":j.id,"project_id":j.project_id,"status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at}
+ row=d.query(Deployment,Project.name,User.username).outerjoin(Project,Project.id==Deployment.project_id).outerjoin(User,User.id==Deployment.user_id).filter(Deployment.id==did).first()
+ if not row:raise HTTPException(404,"部署不存在")
+ j,project_name,username=row
+ return {"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at}
 @app.get("/api/deployments/{did}/logs")
 def logs(did:int,d:Session=Depends(dbdep),u=Depends(user)):return [{"id":x.id,"stream":x.stream,"message":x.message} for x in d.query(Log).filter_by(deployment_id=did).order_by(Log.id)]
 @app.get("/api/projects/{pid}/yaml")
