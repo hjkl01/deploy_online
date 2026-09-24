@@ -1,4 +1,4 @@
-import asyncio,os,shlex
+import asyncio,os,shlex,signal
 from datetime import datetime,timezone
 from pathlib import Path
 from collections import defaultdict
@@ -175,6 +175,13 @@ async def finish(i,status,code):
  j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
  for q in list(queues[i]):await q.put({"type":"status","status":status,"exit_code":code})
 def sh(shell,cmd):return ["/bin/bash","-lic",cmd] if shell=="bash" else ["/bin/zsh","-lic",cmd]
+def kill_process_group(proc):
+ if not proc or proc.returncode is not None:return
+ try:
+  os.killpg(proc.pid,signal.SIGKILL)
+ except ProcessLookupError:
+  pass
+
 async def run(i):
  d=SessionLocal();j=d.get(Deployment,i)
  if not j:d.close();return
@@ -201,14 +208,14 @@ async def run(i):
     elif cmd.strip():
      await emit(i,"system",f"\n>>> {s.name}\n$ {cmd}\n");proc=None
      try:
-      proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+      proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,start_new_session=True)
       async def rd(st,k):
        while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
       await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s.timeout)
       step_code=proc.returncode
      except asyncio.TimeoutError:
       if proc:
-       proc.kill()
+       kill_process_group(proc)
        await proc.wait()
       step_code=124;await emit(i,"stderr",f"[{s.name}] 超时\n")
      except Exception as e:
@@ -223,6 +230,9 @@ async def run(i):
    await finish(i,"success" if ok else "failed",code)
    finished=True
   except asyncio.CancelledError:
+   if proc and proc.returncode is None:
+    kill_process_group(proc)
+    await proc.wait()
    if not finished:
     await finish(i,"failed",130)
     await emit(i,"stderr","部署任务被取消\n")
