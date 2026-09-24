@@ -35,7 +35,6 @@ class Log(Base):
 db_path=Path(settings.database_url.replace("sqlite:///","")).expanduser()
 if not db_path.is_absolute():db_path=Path(__file__).resolve().parent/db_path
 db_path.parent.mkdir(parents=True,exist_ok=True)
-db_was_missing=not db_path.exists()
 Base.metadata.create_all(engine)
 def hash_password(password:str):
  if len(password.encode()) > 72:
@@ -44,9 +43,11 @@ def hash_password(password:str):
 def verify_password(password:str,password_hash:str):
  try:return bcrypt.checkpw(password.encode(),password_hash.encode())
  except (ValueError,TypeError):return False
-if db_was_missing:
- d=SessionLocal()
- d.add(User(username=settings.admin_username,password_hash=hash_password(settings.admin_password),role="admin"));d.commit();d.close()
+d=SessionLocal()
+if not d.query(User).first():
+ d.add(User(username=settings.admin_username,password_hash=hash_password(settings.admin_password),role="admin"))
+ d.commit()
+d.close()
 class Login(BaseModel):username:str;password:str
 class StepIn(BaseModel):
  name:str;step_type:str="command";cwd:str="~";command:str="";enabled:bool=True;timeout:int=Field(3600,ge=1,le=86400);continue_on_error:bool=False
