@@ -3,8 +3,8 @@
 import {useEffect,useState} from "react";
 
 
-const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
-const WS=process.env.NEXT_PUBLIC_WS_URL||"ws://localhost:8000";
+const API=process.env.NEXT_PUBLIC_API_URL||"";
+const WS=process.env.NEXT_PUBLIC_WS_URL||((window.location.protocol==="https:"?"wss://":"ws://")+window.location.host);
 
 export default function Page(){
  const[id,setId]=useState<string|null>(null); const[logs,setLogs]=useState(""); const[status,setStatus]=useState("");
