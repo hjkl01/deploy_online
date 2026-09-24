@@ -1,7 +1,7 @@
 FRONTEND_DIR ?= frontend
 FRONTEND_DIST ?= $(CURDIR)/backend/static
 
-.PHONY: help frontend-build backend frontend
+.PHONY: help frontend-build backend dev
 
 help:
 	@echo "make frontend-build  构建 Next.js 前端并复制到指定目录"
@@ -16,9 +16,7 @@ frontend-build:
 	cd $(FRONTEND_DIR) && npm install && npm run build
 	rm -rf $(FRONTEND_DIST)
 	mkdir -p $(FRONTEND_DIST)
-	cp -r $(FRONTEND_DIR)/.next $(FRONTEND_DIST)/
-	cp -r $(FRONTEND_DIR)/public $(FRONTEND_DIST)/ 2>/dev/null || true
-	cp $(FRONTEND_DIR)/package.json $(FRONTEND_DIST)/
+	cp -r $(FRONTEND_DIR)/out/. $(FRONTEND_DIST)/
 
 backend:
 	cd backend && uv run uvicorn app:app --host 0.0.0.0 --port 8000
