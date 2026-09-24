@@ -214,6 +214,13 @@ async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operat
  if not p or not p.enabled:raise HTTPException(404,"项目不存在或已禁用")
  if locks[pid].locked():raise HTTPException(409,"该项目正在部署")
  j=Deployment(project_id=pid,user_id=u.id);d.add(j);d.commit();d.refresh(j);asyncio.create_task(run(j.id));return {"id":j.id,"status":"pending"}
+@app.get("/api/deployments")
+def deployments(project_id:int|None=None,d:Session=Depends(dbdep),u=Depends(user)):
+ q=d.query(Deployment,Project.name,User.username).outerjoin(Project,Project.id==Deployment.project_id).outerjoin(User,User.id==Deployment.user_id)
+ if project_id is not None:q=q.filter(Deployment.project_id==project_id)
+ rows=q.order_by(Deployment.id.desc()).limit(200).all()
+ return [{"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at} for j,project_name,username in rows]
+
 @app.get("/api/deployments/{did}")
 def deployment(did:int,d:Session=Depends(dbdep),u=Depends(user)):
  j=d.get(Deployment,did)
