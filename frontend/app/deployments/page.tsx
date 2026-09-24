@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 
 const API=process.env.NEXT_PUBLIC_API_URL||"";
 const WS=process.env.NEXT_PUBLIC_WS_URL||"";
@@ -43,12 +43,13 @@ function History(){
 
 function Detail({id}:{id:string}){
  const[logs,setLogs]=useState(""),[status,setStatus]=useState(""),[info,setInfo]=useState<any>(null);
+ const statusRef=useRef("");
  useEffect(()=>{fetch(API+"/api/deployments/"+id,{credentials:"include"}).then(async r=>{if(r.status===401){window.location.href="/";return}if(r.ok)setInfo(await r.json())})},[id]);
  useEffect(()=>{let socket:WebSocket|undefined;let timer:ReturnType<typeof setTimeout>|undefined;let closed=false;
   const wsBase=WS||((window.location.protocol==="https:"?"wss://":"ws://")+window.location.host);
   const connect=()=>{if(closed)return;socket=new WebSocket(wsBase+"/ws/deployments/"+id);
-   socket.onmessage=e=>{const data=JSON.parse(e.data);if(data.type==="connected")setStatus(data.status);if(data.type==="snapshot")setLogs(data.logs.map((item:any)=>item.message).join(""));if(data.type==="log")setLogs(v=>v+data.message);if(data.type==="status"){setStatus(data.status);setInfo((v:any)=>v?{...v,status:data.status,exit_code:data.exit_code}:v);if(data.status==="success"||data.status==="failed")socket?.close()}};
-   socket.onclose=()=>{if(!closed&&status!=="success"&&status!=="failed")timer=setTimeout(connect,1500)};
+   socket.onmessage=e=>{const data=JSON.parse(e.data);if(data.type==="connected"){statusRef.current=data.status;setStatus(data.status)}if(data.type==="snapshot")setLogs(data.logs.map((item:any)=>item.message).join(""));if(data.type==="log")setLogs(v=>v+data.message);if(data.type==="status"){statusRef.current=data.status;setStatus(data.status);setInfo((v:any)=>v?{...v,status:data.status,exit_code:data.exit_code}:v);if(data.status==="success"||data.status==="failed")socket?.close()}};
+   socket.onclose=()=>{if(!closed&&statusRef.current!=="success"&&statusRef.current!=="failed")timer=setTimeout(connect,1500)};
   };
   connect();
   return()=>{closed=true;if(timer)clearTimeout(timer);socket?.close()};
