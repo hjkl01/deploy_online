@@ -119,8 +119,11 @@ def delete(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin"))):
 async def emit(i,stream,msg):
  d=SessionLocal();d.add(Log(deployment_id=i,stream=stream,message=msg));d.commit(); item=d.query(Log).filter_by(deployment_id=i).order_by(Log.id.desc()).first(); d.close()
  for q in list(queues[i]):await q.put({"type":"log","id":item.id,"stream":stream,"message":msg})
-def finish(i,status,code):
- d=SessionLocal();j=d.get(Deployment,i);j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
+async def finish(i,status,code):
+ d=SessionLocal();j=d.get(Deployment,i)
+ if not j:d.close();return
+ j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
+ for q in list(queues[i]):await q.put({"type":"status","status":status,"exit_code":code})
 def sh(shell,cmd):return ["/bin/bash","-lic",cmd] if shell=="bash" else ["/bin/zsh","-lic",cmd]
 async def run(i):
  d=SessionLocal();j=d.get(Deployment,i)
@@ -153,7 +156,7 @@ async def run(i):
    if step_failed:
     ok=False;code=step_code
     if not s.continue_on_error:break
-  finish(i,"success" if ok else "failed",code);await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
+  await finish(i,"success" if ok else "failed",code);await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
 
 @app.post("/api/projects/{pid}/deploy")
 async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
@@ -179,8 +182,10 @@ async def ws(w:WebSocket,did:int):
   await w.close(code=1008);return
  await w.accept();q=asyncio.Queue();queues[did].add(q)
  try:
-  await w.send_json({"type":"connected","deployment_id":did})
-  d=SessionLocal(); rows=d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all(); d.close()
+  d=SessionLocal();j=d.get(Deployment,did);rows=d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all();d.close()
+  if not j:
+   await w.close(code=1008);return
+  await w.send_json({"type":"connected","deployment_id":did,"status":j.status,"exit_code":j.exit_code})
   await w.send_json({"type":"snapshot","logs":[{"id":x.id,"stream":x.stream,"message":x.message} for x in rows]})
   while True:
    try:await w.send_json(await asyncio.wait_for(q.get(),10))
