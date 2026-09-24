@@ -4,7 +4,7 @@ import {useEffect,useState} from "react";
 
 
 const API=process.env.NEXT_PUBLIC_API_URL||"";
-const WS=process.env.NEXT_PUBLIC_WS_URL||((window.location.protocol==="https:"?"wss://":"ws://")+window.location.host);
+const WS=process.env.NEXT_PUBLIC_WS_URL||"";
 
 export default function Page(){
  const[id,setId]=useState<string|null>(null); const[logs,setLogs]=useState(""); const[status,setStatus]=useState("");
@@ -12,7 +12,7 @@ export default function Page(){
  useEffect(()=>{if(!id)return;let socket:WebSocket|undefined;let cancelled=false;
  fetch(API+"/api/deployments/"+id+"/logs",{credentials:"include"}).then(r=>r.json()).then(data=>setLogs(data.map((item:any)=>item.message).join("")));
  fetch(API+"/api/deployments/"+id,{credentials:"include"}).then(r=>r.json()).then(data=>setStatus(data.status));
- socket=new WebSocket(WS+"/ws/deployments/"+id);socket.onmessage=e=>{const data=JSON.parse(e.data);if(data.type==="snapshot")setLogs(data.logs.map((item:any)=>item.message).join(""));if(data.type==="log")setLogs(v=>v+data.message)};
+ const wsBase=WS||((window.location.protocol==="https:"?"wss://":"ws://")+window.location.host);socket=new WebSocket(wsBase+"/ws/deployments/"+id);socket.onmessage=e=>{const data=JSON.parse(e.data);if(data.type==="snapshot")setLogs(data.logs.map((item:any)=>item.message).join(""));if(data.type==="log")setLogs(v=>v+data.message)};
  return()=>{cancelled=true;socket?.close()};
  },[id]);
  if(!id)return <main className="wrap">缺少部署 ID</main>;
