@@ -128,7 +128,6 @@ async def run(i):
  d=SessionLocal();j=d.get(Deployment,i);p=d.get(Project,j.project_id);steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
  async with locks[p.id]:
   d=SessionLocal();j=d.get(Deployment,i);j.status="running";j.started_at=now();d.commit();d.close();env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0
-  if not Path(p.root_path).expanduser().is_dir():await emit(i,"stderr","项目根目录不存在\n");finish(i,"failed",1);return
   await emit(i,"system",f"开始部署 {p.name}\nShell: {p.shell}\n")
   for s in steps:
    if not s.enabled:continue
