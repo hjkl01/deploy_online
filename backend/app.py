@@ -196,7 +196,7 @@ async def run(i):
   d=SessionLocal();j=d.get(Deployment,i)
   if not j:d.close();return
   j.status="running";j.started_at=now();d.commit();d.close()
-  env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0;finished=False
+  env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0;finished=False;proc=None
   try:
    await emit(i,"system",f"开始部署 {p.name}\nShell: {p.shell}\n")
    for s in steps:
