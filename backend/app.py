@@ -101,13 +101,14 @@ def create(x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
 def update(pid:int,x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
  check(x);p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
- p.name=x.name;p.description=x.description;p.branch=x.branch;p.shell=x.shell;p.enabled=x.enabled;d.query(Step).filter_by(project_id=pid).delete();d.query(Env).filter_by(project_id=pid).delete()
+ p.name=x.name;p.description=x.description;p.branch=x.branch;p.shell=x.shell;p.enabled=x.enabled
+ existing_secret={e.key:e.value for e in d.query(Env).filter_by(project_id=pid,is_secret=True).all()}
+ d.query(Step).filter_by(project_id=pid).delete();d.query(Env).filter_by(project_id=pid).delete()
  for i,s in enumerate(x.steps):d.add(Step(project_id=pid,position=i,**s.model_dump()))
- existing_secret={e.key:e for e in d.query(Env).filter_by(project_id=pid,is_secret=True).all()}
  for e in x.environment:
   data=e.model_dump()
   if data["is_secret"] and data["value"]=="" and data["key"] in existing_secret:
-   data["value"]=existing_secret[data["key"]].value
+   data["value"]=existing_secret[data["key"]]
   d.add(Env(project_id=pid,**data))
  d.commit();return po(p)
 @app.delete("/api/projects/{pid}")
@@ -122,29 +123,38 @@ def finish(i,status,code):
  d=SessionLocal();j=d.get(Deployment,i);j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
 def sh(shell,cmd):return ["/bin/bash","-lc",cmd] if shell=="bash" else ["/bin/zsh","-lc",cmd]
 async def run(i):
- d=SessionLocal();j=d.get(Deployment,i);p=d.get(Project,j.project_id);steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
+ d=SessionLocal();j=d.get(Deployment,i)
+ if not j:d.close();return
+ p=d.get(Project,j.project_id);steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
  async with locks[p.id]:
   d=SessionLocal();j=d.get(Deployment,i);j.status="running";j.started_at=now();d.commit();d.close();env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0
   await emit(i,"system",f"开始部署 {p.name}\nShell: {p.shell}\n")
   for s in steps:
    if not s.enabled:continue
    cwd=Path(s.cwd).expanduser().resolve();cmd=("git checkout "+shlex.quote(p.branch)+" && git pull --ff-only") if s.step_type=="git_pull" else s.command
-   if not cwd.is_dir():await emit(i,"stderr",f"[{s.name}] cwd 不存在: {cwd}\n");ok=False;code=1
+   step_failed=False;step_code=0
+   if not cwd.is_dir():
+    await emit(i,"stderr",f"[{s.name}] cwd 不存在: {cwd}\n");step_failed=True;step_code=1
    elif cmd.strip():
     await emit(i,"system",f"\n>>> {s.name}\n$ {cmd}\n");proc=None
     try:
      proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
      async def rd(st,k):
       while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
-     await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s.timeout);code=proc.returncode
+     await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s.timeout);step_code=proc.returncode
     except asyncio.TimeoutError:
      if proc:proc.kill();await proc.wait()
-     code=124;await emit(i,"stderr",f"[{s.name}] 超时\n")
-    except Exception as e:code=1;await emit(i,"stderr",f"[{s.name}] {e}\n")
-    if code:ok=False;await emit(i,"system",f"[{s.name}] 失败 exit={code}\n")
+     step_code=124;await emit(i,"stderr",f"[{s.name}] 超时\n")
+    except Exception as e:
+     step_code=1;await emit(i,"stderr",f"[{s.name}] {e}\n")
+    step_failed=step_code!=0
+    if step_failed:await emit(i,"system",f"[{s.name}] 失败 exit={step_code}\n")
     else:await emit(i,"system",f"[{s.name}] 完成\n")
-   if not ok and not s.continue_on_error:break
+   if step_failed:
+    ok=False;code=step_code
+    if not s.continue_on_error:break
   finish(i,"success" if ok else "failed",code);await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
+
 @app.post("/api/projects/{pid}/deploy")
 async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
  p=d.get(Project,pid)
