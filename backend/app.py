@@ -145,7 +145,7 @@ def logs(did:int,d:Session=Depends(dbdep),u=Depends(user)):return [{"id":x.id,"s
 def yaml_export(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator","viewer"))):
  p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
- return yaml.safe_dump({"name":p.name,"root_path":p.root_path,"branch":p.branch,"shell":p.shell,"steps":[{"name":s.name,"type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error} for s in p.steps]},allow_unicode=True,sort_keys=False)
+ return yaml.safe_dump({"name":p.name,"branch":p.branch,"shell":p.shell,"steps":[{"name":s.name,"type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error} for s in p.steps]},allow_unicode=True,sort_keys=False)
 @app.websocket("/ws/deployments/{did}")
 async def ws(w:WebSocket,did:int):
  await w.accept();q=asyncio.Queue();queues[did].add(q)
