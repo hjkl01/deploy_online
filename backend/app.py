@@ -188,8 +188,8 @@ async def run(i):
  p=d.get(Project,j.project_id)
  if not p:
   d.close()
-  await finish(i,"failed",1)
   await emit(i,"stderr","项目不存在，部署终止\n")
+  await finish(i,"failed",1)
   return
  steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
  async with locks[p.id]:
