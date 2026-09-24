@@ -54,6 +54,10 @@ class StepIn(BaseModel):
 class EnvIn(BaseModel):key:str;value:str="";is_secret:bool=False
 class ProjectIn(BaseModel):
  name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=Field(default_factory=list);environment:list[EnvIn]=Field(default_factory=list)
+class UserIn(BaseModel):
+ username:str
+ password:str=""
+ role:str="viewer"
 app=FastAPI(title="deploy_online");
 STATIC_DIR=Path(__file__).resolve().parent/"static"
 if (STATIC_DIR/"_next").is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
@@ -95,6 +99,41 @@ def login(x:Login,request:Request,d:Session=Depends(dbdep)):
 def logout(request:Request):request.session.clear();return {"ok":True}
 @app.get("/api/auth/me")
 def me(u=Depends(user)):return {"id":u.id,"username":u.username,"role":u.role}
+@app.get("/api/users")
+def users(d:Session=Depends(dbdep),u=Depends(role("admin"))):
+ return [{"id":x.id,"username":x.username,"role":x.role} for x in d.query(User).order_by(User.id).all()]
+
+@app.post("/api/users")
+def create_user(x:UserIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
+ if not x.username.strip() or not x.password: raise HTTPException(400,"用户名和密码不能为空")
+ if x.role not in ("admin","operator","viewer"): raise HTTPException(400,"角色无效")
+ if len(x.password.encode())>72: raise HTTPException(400,"密码不能超过 72 字节")
+ if d.query(User).filter_by(username=x.username.strip()).first(): raise HTTPException(409,"用户名已存在")
+ v=User(username=x.username.strip(),password_hash=hash_password(x.password),role=x.role);d.add(v);d.commit();d.refresh(v)
+ return {"id":v.id,"username":v.username,"role":v.role}
+
+@app.put("/api/users/{uid}")
+def update_user(uid:int,x:UserIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
+ v=d.get(User,uid)
+ if not v: raise HTTPException(404,"用户不存在")
+ if x.role not in ("admin","operator","viewer"): raise HTTPException(400,"角色无效")
+ other=d.query(User).filter(User.username==x.username.strip(),User.id!=uid).first()
+ if other: raise HTTPException(409,"用户名已存在")
+ v.username=x.username.strip();v.role=x.role
+ if x.password:
+  if len(x.password.encode())>72: raise HTTPException(400,"密码不能超过 72 字节")
+  v.password_hash=hash_password(x.password)
+ d.commit()
+ return {"id":v.id,"username":v.username,"role":v.role}
+
+@app.delete("/api/users/{uid}")
+def delete_user(uid:int,d:Session=Depends(dbdep),u=Depends(role("admin"))):
+ if uid==u.id: raise HTTPException(400,"不能删除当前登录用户")
+ v=d.get(User,uid)
+ if not v: raise HTTPException(404,"用户不存在")
+ if v.role=="admin" and d.query(User).filter_by(role="admin").count()<=1: raise HTTPException(400,"至少保留一个管理员")
+ d.delete(v);d.commit();return {"ok":True}
+
 @app.get("/api/projects")
 def projects(d:Session=Depends(dbdep),u=Depends(role("admin","operator","viewer"))):return [po(p) for p in d.query(Project).order_by(Project.id.desc())]
 @app.get("/api/projects/{pid}")
