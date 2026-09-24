@@ -178,35 +178,59 @@ def sh(shell,cmd):return ["/bin/bash","-lic",cmd] if shell=="bash" else ["/bin/z
 async def run(i):
  d=SessionLocal();j=d.get(Deployment,i)
  if not j:d.close();return
- p=d.get(Project,j.project_id);steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
+ p=d.get(Project,j.project_id)
+ if not p:
+  d.close()
+  await finish(i,"failed",1)
+  await emit(i,"stderr","项目不存在，部署终止\n")
+  return
+ steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
  async with locks[p.id]:
-  d=SessionLocal();j=d.get(Deployment,i);j.status="running";j.started_at=now();d.commit();d.close();env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0
-  await emit(i,"system",f"开始部署 {p.name}\nShell: {p.shell}\n")
-  for s in steps:
-   if not s.enabled:continue
-   cwd=Path(s.cwd).expanduser().resolve();cmd=("git checkout "+shlex.quote(p.branch)+" && git pull --ff-only") if s.step_type=="git_pull" else s.command
-   step_failed=False;step_code=0
-   if not cwd.is_dir():
-    await emit(i,"stderr",f"[{s.name}] cwd 不存在: {cwd}\n");step_failed=True;step_code=1
-   elif cmd.strip():
-    await emit(i,"system",f"\n>>> {s.name}\n$ {cmd}\n");proc=None
-    try:
-     proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
-     async def rd(st,k):
-      while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
-     await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s.timeout);step_code=proc.returncode
-    except asyncio.TimeoutError:
-     if proc:proc.kill();await proc.wait()
-     step_code=124;await emit(i,"stderr",f"[{s.name}] 超时\n")
-    except Exception as e:
-     step_code=1;await emit(i,"stderr",f"[{s.name}] {e}\n")
-    step_failed=step_code!=0
-    if step_failed:await emit(i,"system",f"[{s.name}] 失败 exit={step_code}\n")
-    else:await emit(i,"system",f"[{s.name}] 完成\n")
-   if step_failed:
-    ok=False;code=step_code
-    if not s.continue_on_error:break
-  await finish(i,"success" if ok else "failed",code);await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
+  d=SessionLocal();j=d.get(Deployment,i)
+  if not j:d.close();return
+  j.status="running";j.started_at=now();d.commit();d.close()
+  env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0;finished=False
+  try:
+   await emit(i,"system",f"开始部署 {p.name}\nShell: {p.shell}\n")
+   for s in steps:
+    if not s.enabled:continue
+    cwd=Path(s.cwd).expanduser().resolve();cmd=("git checkout "+shlex.quote(p.branch)+" && git pull --ff-only") if s.step_type=="git_pull" else s.command
+    step_failed=False;step_code=0
+    if not cwd.is_dir():
+     await emit(i,"stderr",f"[{s.name}] cwd 不存在: {cwd}\n");step_failed=True;step_code=1
+    elif cmd.strip():
+     await emit(i,"system",f"\n>>> {s.name}\n$ {cmd}\n");proc=None
+     try:
+      proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+      async def rd(st,k):
+       while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
+      await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s.timeout)
+      step_code=proc.returncode
+     except asyncio.TimeoutError:
+      if proc:
+       proc.kill()
+       await proc.wait()
+      step_code=124;await emit(i,"stderr",f"[{s.name}] 超时\n")
+     except Exception as e:
+      step_code=1;await emit(i,"stderr",f"[{s.name}] {e}\n")
+     step_failed=step_code!=0
+     if step_failed:await emit(i,"system",f"[{s.name}] 失败 exit={step_code}\n")
+     else:await emit(i,"system",f"[{s.name}] 完成\n")
+    if step_failed:
+     ok=False;code=step_code
+     if not s.continue_on_error:break
+   await finish(i,"success" if ok else "failed",code)
+   finished=True
+   await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
+  except asyncio.CancelledError:
+   if not finished:
+    await finish(i,"failed",130)
+    await emit(i,"stderr","部署任务被取消\n")
+   raise
+  except Exception as e:
+   if not finished:
+    await finish(i,"failed",1)
+    await emit(i,"stderr",f"部署任务异常: {e}\n")
 
 @app.post("/api/projects/{pid}/deploy")
 async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
