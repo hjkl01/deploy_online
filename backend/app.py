@@ -38,7 +38,7 @@ class StepIn(BaseModel):
  name:str;step_type:str="command";cwd:str="~";command:str="";enabled:bool=True;timeout:int=Field(3600,ge=1,le=86400);continue_on_error:bool=False
 class EnvIn(BaseModel):key:str;value:str="";is_secret:bool=False
 class ProjectIn(BaseModel):
- name:str;description:str="";root_path:str;branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=[];environment:list[EnvIn]=[]
+ name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=[];environment:list[EnvIn]=[]
 app=FastAPI(title="deploy_online");app.add_middleware(SessionMiddleware,secret_key=settings.secret_key)
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 locks=defaultdict(asyncio.Lock);queues=defaultdict(set)
@@ -57,10 +57,9 @@ def role(*roles):
  return dep
 def check(x):
  if x.shell not in ("bash","zsh"):raise HTTPException(400,"shell 只能是 bash 或 zsh")
- if not(x.root_path.startswith("~") or x.root_path.startswith("/")):raise HTTPException(400,"root_path 必须从 ~ 或绝对路径开始")
  for s in x.steps:
-  if not(s.cwd.startswith("~") or s.cwd.startswith("/")):raise HTTPException(400,"cwd 必须从 ~ 或绝对路径开始")
-def po(p):return {"id":p.id,"name":p.name,"description":p.description,"root_path":p.root_path,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
+  if not s.cwd.startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
+def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
 @app.post("/api/auth/login")
@@ -81,7 +80,7 @@ def project(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator","
  x=po(p);x["steps"]=[{"id":s.id,"name":s.name,"step_type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error,"position":s.position} for s in p.steps];x["environment"]=[{"id":e.id,"key":e.key,"value":"" if e.is_secret else e.value,"is_secret":e.is_secret} for e in p.envs];return x
 @app.post("/api/projects")
 def create(x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
- check(x);p=Project(name=x.name,description=x.description,root_path=x.root_path,branch=x.branch,shell=x.shell,enabled=x.enabled);d.add(p);d.flush()
+ check(x);p=Project(name=x.name,description=x.description,branch=x.branch,shell=x.shell,enabled=x.enabled);d.add(p);d.flush()
  for i,s in enumerate(x.steps):d.add(Step(project_id=p.id,position=i,**s.model_dump()))
  for e in x.environment:d.add(Env(project_id=p.id,**e.model_dump()))
  d.commit();d.refresh(p);return po(p)
@@ -89,7 +88,7 @@ def create(x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
 def update(pid:int,x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
  check(x);p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
- p.name=x.name;p.description=x.description;p.root_path=x.root_path;p.branch=x.branch;p.shell=x.shell;p.enabled=x.enabled;d.query(Step).filter_by(project_id=pid).delete();d.query(Env).filter_by(project_id=pid).delete()
+ p.name=x.name;p.description=x.description;p.branch=x.branch;p.shell=x.shell;p.enabled=x.enabled;d.query(Step).filter_by(project_id=pid).delete();d.query(Env).filter_by(project_id=pid).delete()
  for i,s in enumerate(x.steps):d.add(Step(project_id=pid,position=i,**s.model_dump()))
  for e in x.environment:d.add(Env(project_id=pid,**e.model_dump()))
  d.commit();return po(p)
@@ -99,8 +98,8 @@ def delete(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin"))):
  if not p:raise HTTPException(404,"项目不存在")
  d.delete(p);d.commit();return {"ok":True}
 async def emit(i,stream,msg):
- d=SessionLocal();d.add(Log(deployment_id=i,stream=stream,message=msg));d.commit();d.close()
- for q in list(queues[i]):await q.put({"type":"log","stream":stream,"message":msg})
+ d=SessionLocal();d.add(Log(deployment_id=i,stream=stream,message=msg));d.commit(); item=d.query(Log).filter_by(deployment_id=i).order_by(Log.id.desc()).first(); d.close()
+ for q in list(queues[i]):await q.put({"type":"log","id":item.id,"stream":stream,"message":msg})
 def finish(i,status,code):
  d=SessionLocal();j=d.get(Deployment,i);j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
 def sh(shell,cmd):return ["/bin/bash","-lc",cmd] if shell=="bash" else ["/bin/zsh","-lc",cmd]
@@ -152,6 +151,8 @@ async def ws(w:WebSocket,did:int):
  await w.accept();q=asyncio.Queue();queues[did].add(q)
  try:
   await w.send_json({"type":"connected","deployment_id":did})
+  d=SessionLocal(); rows=d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all(); d.close()
+  await w.send_json({"type":"snapshot","logs":[{"id":x.id,"stream":x.stream,"message":x.message} for x in rows]})
   while True:
    try:await w.send_json(await asyncio.wait_for(q.get(),10))
    except asyncio.TimeoutError:await w.send_json({"type":"ping"})
