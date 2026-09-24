@@ -72,17 +72,6 @@ def check(x):
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
-@app.get("/{path:path}")
-def frontend(path:str):
- if path.startswith(("api/","ws/","health","_next/")): raise HTTPException(404,"Not Found")
- target=STATIC_DIR/path
- if target.is_file(): return FileResponse(target)
- html=target/"index.html"
- if html.is_file(): return FileResponse(html)
- index=STATIC_DIR/"index.html"
- if index.is_file(): return FileResponse(index)
- raise HTTPException(404,"前端文件不存在")
-
 @app.post("/api/auth/login")
 def login(x:Login,request:Request,d:Session=Depends(dbdep)):
  u=d.query(User).filter_by(username=x.username).first()
@@ -180,3 +169,14 @@ async def ws(w:WebSocket,did:int):
    except asyncio.TimeoutError:await w.send_json({"type":"ping"})
  except WebSocketDisconnect:pass
  finally:queues[did].discard(q)
+
+
+@app.get("/{path:path}")
+def frontend(path:str):
+ target=STATIC_DIR/path
+ if target.is_file(): return FileResponse(target)
+ html=target/"index.html"
+ if html.is_file(): return FileResponse(html)
+ index=STATIC_DIR/"index.html"
+ if index.is_file(): return FileResponse(index)
+ raise HTTPException(404,"前端文件不存在")
