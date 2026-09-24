@@ -21,12 +21,23 @@ export default function Page(){
 }
 
 function History(){
- const[rows,setRows]=useState<any[]>([]),[loading,setLoading]=useState(true);
- useEffect(()=>{fetch(API+"/api/deployments",{credentials:"include"}).then(async r=>{if(r.status===401){window.location.href="/";return}if(r.ok)setRows(await r.json())}).finally(()=>setLoading(false))},[]);
+ const[rows,setRows]=useState<any[]>([]),[projects,setProjects]=useState<any[]>([]),[loading,setLoading]=useState(true);
+ const[projectId,setProjectId]=useState(""),[filterStatus,setFilterStatus]=useState(""),[page,setPage]=useState(1),[total,setTotal]=useState(0);
+ const pageSize=20;
+ const load=()=>{
+  setLoading(true);
+  const q=new URLSearchParams({page:String(page),page_size:String(pageSize)});
+  if(projectId)q.set("project_id",projectId);if(filterStatus)q.set("status",filterStatus);
+  fetch(API+"/api/deployments?"+q.toString(),{credentials:"include"}).then(async r=>{if(r.status===401){window.location.href="/";return}if(r.ok){const x=await r.json();setRows(x.items);setTotal(x.total)}}).finally(()=>setLoading(false));
+ };
+ useEffect(()=>{fetch(API+"/api/projects",{credentials:"include"}).then(r=>r.ok?r.json():[]).then(setProjects)},[]);
+ useEffect(()=>{load()},[page,projectId,filterStatus]);
  return <main className="wrap"><div className="topbar"><h1>部署记录</h1><div><a href="/">首页</a><a href="/projects">项目管理</a></div></div>
+  <div className="card filters"><select value={projectId} onChange={e=>{setProjectId(e.target.value);setPage(1)}}><option value="">全部项目</option>{projects.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><select value={filterStatus} onChange={e=>{setFilterStatus(e.target.value);setPage(1)}}><option value="">全部状态</option><option value="pending">等待中</option><option value="running">运行中</option><option value="success">成功</option><option value="failed">失败</option></select></div>
   {loading&&<div className="card">加载中...</div>}
-  {!loading&&rows.length===0&&<div className="card">暂无部署记录。</div>}
+  {!loading&&rows.length===0&&<div className="card">暂无符合条件的部署记录。</div>}
   {rows.map(x=><div className="card" key={x.id}><div className="row"><div><h2>{x.project_name} <span className={"status "+x.status}>{statusName(x.status)}</span></h2><p>部署 #{x.id} · 操作人：{x.username}</p><p>开始：{time(x.started_at||x.created_at)} · 结束：{time(x.finished_at)} · 耗时：{duration(x)}</p>{x.exit_code!==null&&<p>退出码：{x.exit_code}</p>}</div><div><a className="button-link" href={"/deployments?id="+x.id}>查看日志</a></div></div></div>)}
+  <div className="pagination"><button disabled={page<=1} onClick={()=>setPage(page-1)}>上一页</button><span>第 {page} 页，共 {Math.max(1,Math.ceil(total/pageSize))} 页（{total} 条）</span><button disabled={page>=Math.ceil(total/pageSize)} onClick={()=>setPage(page+1)}>下一页</button></div>
  </main>
 }
 
