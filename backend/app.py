@@ -69,9 +69,12 @@ def check(x):
  if x.shell not in ("bash","zsh"):raise HTTPException(400,"shell 只能是 bash 或 zsh")
  home=Path.home().resolve()
  for s in x.steps:
-  if not s.cwd.startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
-  target=(home / s.cwd[2:]).resolve()
+  if s.cwd != "~" and not s.cwd.startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
+  relative="" if s.cwd == "~" else s.cwd[2:]
+  target=(home / relative).resolve()
   if target != home and home not in target.parents:raise HTTPException(400,"cwd 不能越出用户家目录")
+ for e in x.environment:
+  if not e.key or "=" in e.key or "\\x00" in e.key:raise HTTPException(400,"环境变量名无效")
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
