@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel,Field
 from pydantic_settings import BaseSettings
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy import create_engine,Column,Integer,String,Text,Boolean,ForeignKey,DateTime
 from sqlalchemy.orm import declarative_base,sessionmaker,Session,relationship
 
@@ -36,10 +36,17 @@ db_path=Path(settings.database_url.replace("sqlite:///","")).expanduser()
 if not db_path.is_absolute():db_path=Path(__file__).resolve().parent/db_path
 db_path.parent.mkdir(parents=True,exist_ok=True)
 db_was_missing=not db_path.exists()
-Base.metadata.create_all(engine);pwd=CryptContext(schemes=["bcrypt"],deprecated="auto")
+Base.metadata.create_all(engine)
+def hash_password(password:str):
+ if len(password.encode()) > 72:
+  raise RuntimeError("ADMIN_PASSWORD 不能超过 72 字节")
+ return bcrypt.hashpw(password.encode(),bcrypt.gensalt()).decode()
+def verify_password(password:str,password_hash:str):
+ try:return bcrypt.checkpw(password.encode(),password_hash.encode())
+ except (ValueError,TypeError):return False
 if db_was_missing:
  d=SessionLocal()
- d.add(User(username=settings.admin_username,password_hash=pwd.hash(settings.admin_password),role="admin"));d.commit();d.close()
+ d.add(User(username=settings.admin_username,password_hash=hash_password(settings.admin_password),role="admin"));d.commit();d.close()
 class Login(BaseModel):username:str;password:str
 class StepIn(BaseModel):
  name:str;step_type:str="command";cwd:str="~";command:str="";enabled:bool=True;timeout:int=Field(3600,ge=1,le=86400);continue_on_error:bool=False
@@ -81,7 +88,7 @@ def health():return {"status":"ok"}
 @app.post("/api/auth/login")
 def login(x:Login,request:Request,d:Session=Depends(dbdep)):
  u=d.query(User).filter_by(username=x.username).first()
- if not u or not pwd.verify(x.password,u.password_hash):raise HTTPException(401,"用户名或密码错误")
+ if not u or not verify_password(x.password,u.password_hash):raise HTTPException(401,"用户名或密码错误")
  request.session["user_id"]=u.id;return {"id":u.id,"username":u.username,"role":u.role}
 @app.post("/api/auth/logout")
 def logout(request:Request):request.session.clear();return {"ok":True}
