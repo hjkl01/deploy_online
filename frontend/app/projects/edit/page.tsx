@@ -1,13 +1,14 @@
 "use client";
 
 import {useEffect,useState} from "react";
-import {useSearchParams,useRouter} from "next/navigation";
+import {useRouter} from "next/navigation";
 
 const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
 const emptyStep={name:"",step_type:"command",cwd:"~/",command:"",enabled:true,timeout:3600,continue_on_error:false};
 
 export default function Edit(){
- const params=useSearchParams(); const id=params.get("id"); const r=useRouter(); const[p,setP]=useState<any>(null);
+ const r=useRouter(); const[id,setId]=useState<string|null>(null); const[p,setP]=useState<any>(null);
+ useEffect(()=>{setId(new URLSearchParams(window.location.search).get("id"))},[]);
  useEffect(()=>{if(!id)return;fetch(API+"/api/projects/"+id,{credentials:"include"}).then(x=>x.json()).then(setP)},[id]);
  if(!id)return <main className="wrap">缺少项目 ID</main>;
  if(!p)return <main className="wrap">加载中...</main>;
