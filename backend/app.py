@@ -15,6 +15,7 @@ from sqlalchemy import create_engine,Column,Integer,String,Text,Boolean,ForeignK
 from sqlalchemy.orm import declarative_base,sessionmaker,Session,relationship
 
 class Settings(BaseSettings):
+ model_config={"env_file":".env","env_file_encoding":"utf-8","extra":"ignore"}
  database_url:str="sqlite:///./data/deploy_online.db";secret_key:str="change-me";admin_username:str="admin";admin_password:str="admin"
 settings=Settings();Path("data").mkdir(exist_ok=True)
 engine=create_engine(settings.database_url,connect_args={"check_same_thread":False});SessionLocal=sessionmaker(bind=engine,expire_on_commit=False);Base=declarative_base();now=lambda:datetime.now(timezone.utc)
@@ -47,7 +48,7 @@ class ProjectIn(BaseModel):
  name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=[];environment:list[EnvIn]=[]
 app=FastAPI(title="deploy_online");
 STATIC_DIR=Path(__file__).resolve().parent/"static"
-if STATIC_DIR.is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
+if (STATIC_DIR/"_next").is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
 app.add_middleware(SessionMiddleware,secret_key=settings.secret_key)
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 locks=defaultdict(asyncio.Lock);queues=defaultdict(set)
