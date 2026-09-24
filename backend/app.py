@@ -45,7 +45,7 @@ class StepIn(BaseModel):
  name:str;step_type:str="command";cwd:str="~";command:str="";enabled:bool=True;timeout:int=Field(3600,ge=1,le=86400);continue_on_error:bool=False
 class EnvIn(BaseModel):key:str;value:str="";is_secret:bool=False
 class ProjectIn(BaseModel):
- name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=[];environment:list[EnvIn]=[]
+ name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=Field(default_factory=list);environment:list[EnvIn]=Field(default_factory=list)
 app=FastAPI(title="deploy_online");
 STATIC_DIR=Path(__file__).resolve().parent/"static"
 if (STATIC_DIR/"_next").is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
@@ -121,7 +121,7 @@ async def emit(i,stream,msg):
  for q in list(queues[i]):await q.put({"type":"log","id":item.id,"stream":stream,"message":msg})
 def finish(i,status,code):
  d=SessionLocal();j=d.get(Deployment,i);j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
-def sh(shell,cmd):return ["/bin/bash","-lc",cmd] if shell=="bash" else ["/bin/zsh","-lc",cmd]
+def sh(shell,cmd):return ["/bin/bash","-lic",cmd] if shell=="bash" else ["/bin/zsh","-lic",cmd]
 async def run(i):
  d=SessionLocal();j=d.get(Deployment,i)
  if not j:d.close();return
