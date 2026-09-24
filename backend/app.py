@@ -148,6 +148,8 @@ def yaml_export(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operato
  return yaml.safe_dump({"name":p.name,"branch":p.branch,"shell":p.shell,"steps":[{"name":s.name,"type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error} for s in p.steps]},allow_unicode=True,sort_keys=False)
 @app.websocket("/ws/deployments/{did}")
 async def ws(w:WebSocket,did:int):
+ if not w.scope.get("session",{}).get("user_id"):
+  await w.close(code=1008);return
  await w.accept();q=asyncio.Queue();queues[did].add(q)
  try:
   await w.send_json({"type":"connected","deployment_id":did})
