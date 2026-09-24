@@ -31,10 +31,14 @@ class Deployment(Base):
  __tablename__="deployments";id=Column(Integer,primary_key=True);project_id=Column(Integer);user_id=Column(Integer);status=Column(String(30),default="pending");exit_code=Column(Integer);created_at=Column(DateTime,default=now);started_at=Column(DateTime);finished_at=Column(DateTime)
 class Log(Base):
  __tablename__="logs";id=Column(Integer,primary_key=True);deployment_id=Column(Integer,index=True);stream=Column(String(20));message=Column(Text);created_at=Column(DateTime,default=now)
+db_path=Path(settings.database_url.replace("sqlite:///","")).expanduser()
+if not db_path.is_absolute():db_path=Path(__file__).resolve().parent/db_path
+db_path.parent.mkdir(parents=True,exist_ok=True)
+db_was_missing=not db_path.exists()
 Base.metadata.create_all(engine);pwd=CryptContext(schemes=["bcrypt"],deprecated="auto")
-d=SessionLocal()
-if not d.query(User).filter_by(username=settings.admin_username).first():d.add(User(username=settings.admin_username,password_hash=pwd.hash(settings.admin_password),role="admin"));d.commit()
-d.close()
+if db_was_missing:
+ d=SessionLocal()
+ d.add(User(username=settings.admin_username,password_hash=pwd.hash(settings.admin_password),role="admin"));d.commit();d.close()
 class Login(BaseModel):username:str;password:str
 class StepIn(BaseModel):
  name:str;step_type:str="command";cwd:str="~";command:str="";enabled:bool=True;timeout:int=Field(3600,ge=1,le=86400);continue_on_error:bool=False
