@@ -19,7 +19,7 @@ engine=create_engine(settings.database_url,connect_args={"check_same_thread":Fal
 class User(Base):
  __tablename__="users";id=Column(Integer,primary_key=True);username=Column(String(100),unique=True);password_hash=Column(String(255));role=Column(String(20),default="viewer")
 class Project(Base):
- __tablename__="projects";id=Column(Integer,primary_key=True);name=Column(String(200));description=Column(Text,default="");root_path=Column(String(1000));branch=Column(String(255),default="main");shell=Column(String(20),default="bash");enabled=Column(Boolean,default=True)
+ __tablename__="projects";id=Column(Integer,primary_key=True);name=Column(String(200));description=Column(Text,default="");branch=Column(String(255),default="main");shell=Column(String(20),default="bash");enabled=Column(Boolean,default=True)
  steps=relationship("Step",cascade="all,delete-orphan",order_by="Step.position");envs=relationship("Env",cascade="all,delete-orphan")
 class Step(Base):
  __tablename__="steps";id=Column(Integer,primary_key=True);project_id=Column(ForeignKey("projects.id"));name=Column(String(200));step_type=Column(String(30),default="command");cwd=Column(String(1000),default="~");command=Column(Text,default="");enabled=Column(Boolean,default=True);timeout=Column(Integer,default=3600);continue_on_error=Column(Boolean,default=False);position=Column(Integer,default=0)
