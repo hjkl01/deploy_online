@@ -264,8 +264,19 @@ async def run(i):
       proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,start_new_session=True)
       async def rd(st,k):
        while line:=await st.readline():await emit(i,k,line.decode(errors="replace"),step_id)
-      await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s["timeout"])
-      step_code=proc.returncode
+      async def cancel_watch():
+       nonlocal cancelled
+       while proc and proc.returncode is None:
+        await asyncio.sleep(0.5)
+        d=SessionLocal();j=d.get(Deployment,i);requested=bool(j and j.cancel_requested);d.close()
+        if requested:
+         cancelled=True;kill_process_group(proc);return
+      cancel_task=asyncio.create_task(cancel_watch())
+      try:
+       await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s["timeout"])
+      finally:
+       cancel_task.cancel()
+      step_code=130 if cancelled else proc.returncode
       if s["type"]=="git_pull" and step_code==0:
        after=await git_sha(cwd)
        if after:
@@ -282,7 +293,7 @@ async def run(i):
      else:await emit(i,"system",f"[{s['name']}] 完成\n",step_id)
     if step_failed:
      ok=False;code=step_code
-     if not s["continue_on_error"]:break
+     if cancelled or not s["continue_on_error"]:break
    if cancelled:
     await emit(i,"system","\n部署已取消\n");await finish(i,"cancelled",130)
    else:
