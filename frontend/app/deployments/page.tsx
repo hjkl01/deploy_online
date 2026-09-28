@@ -42,7 +42,7 @@ function History(){
 }
 
 function Detail({id}:{id:string}){
- const[logs,setLogs]=useState(""),[status,setStatus]=useState(""),[info,setInfo]=useState<any>(null);
+ const[logs,setLogs]=useState(""),[status,setStatus]=useState(""),[info,setInfo]=useState<any>(null),[busy,setBusy]=useState(false);
  const statusRef=useRef("");
  const logIdsRef=useRef<Set<number>>(new Set());
  useEffect(()=>{fetch(API+"/api/deployments/"+id,{credentials:"include"}).then(async r=>{if(r.status===401){window.location.href="/";return}if(r.ok)setInfo(await r.json())})},[id]);
@@ -61,5 +61,5 @@ function Detail({id}:{id:string}){
   connect();
   return()=>{closed=true;if(timer)clearTimeout(timer);socket?.close()};
  },[id]);
- return <main className="wrap"><div className="topbar"><div><h1>部署 #{id} <span className={"status "+status}>{statusName(status)}</span></h1>{info&&<p>项目 {info.project_name||("#"+info.project_id)} · 操作人：{info.username} · 开始：{time(info.started_at||info.created_at)} · 结束：{time(info.finished_at)} · 耗时：{duration(info)}{info.exit_code!==null&&info.exit_code!==undefined?" · 退出码："+info.exit_code:""}</p>}</div><div><a href="/deployments">部署记录</a><a href="/">首页</a></div></div><pre>{logs}</pre></main>;
+ return <main className="wrap"><div className="topbar"><div><h1>部署 #{id} <span className={"status "+status}>{statusName(status)}</span></h1>{info&&<p>项目 {info.project_name||("#"+info.project_id)} · 操作人：{info.username} · 开始：{time(info.started_at||info.created_at)} · 结束：{time(info.finished_at)} · 耗时：{duration(info)}{info.exit_code!==null&&info.exit_code!==undefined?" · 退出码："+info.exit_code:""}</p>}</div><div><a href="/deployments">部署记录</a><a href="/">首页</a></div></div><div className="actions">{(status==="pending"||status==="running")&&<button disabled={busy} onClick={async()=>{setBusy(true);await fetch(API+"/api/deployments/"+id+"/cancel",{method:"POST",credentials:"include"});setBusy(false)}}>取消部署</button>}{(status==="failed"||status==="cancelled")&&<button disabled={busy} onClick={async()=>{setBusy(true);const r=await fetch(API+"/api/deployments/"+id+"/retry",{method:"POST",credentials:"include"});setBusy(false);if(r.ok){const x=await r.json();window.location.href="/deployments?id="+x.id}}}>重新部署</button>}</div><pre>{logs}</pre></main>;
 }
