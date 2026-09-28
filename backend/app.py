@@ -13,8 +13,8 @@ import bcrypt
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet, InvalidToken
 
-from .config import settings,engine,SessionLocal,Base,now
-from .models import User,Project,Step,Env,Deployment,Log
+from config import settings,engine,SessionLocal,Base,now
+from models import User,Project,Step,Env,Deployment,Log
 def encrypt_secret(value:str)->str:return "enc:"+FERNET.encrypt(value.encode()).decode()
 def decrypt_secret(value:str)->str:
  if not value.startswith("enc:"):return value
