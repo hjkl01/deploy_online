@@ -391,6 +391,11 @@ def retry_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("admi
         retry_of=old.id,
     )
     d.add(job)
+    d.flush()
+    snapshot = __import__("json").loads(job.config_snapshot or "{}")
+    for i, step in enumerate(snapshot.get("steps", [])):
+        if step.get("enabled"):
+            d.add(DeploymentStep(deployment_id=job.id, source_step_id=step.get("id"), position=i, name=step.get("name", "")))
     d.commit()
     d.refresh(job)
     return {"id": job.id, "status": job.status, "retry_of": old.id}
