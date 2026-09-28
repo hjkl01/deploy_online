@@ -232,9 +232,9 @@ async def run(i):
     step_id=s.get("id")
     step_failed=False;step_code=0
     if not cwd.is_dir():
-     await emit(i,"stderr",f"[{s["name"]}] cwd 不存在: {cwd}\n");step_failed=True;step_code=1
+     await emit(i,"stderr",f"[{s['name']}] cwd 不存在: {cwd}\n",step_id);step_failed=True;step_code=1
     elif cmd.strip():
-     await emit(i,"system",f"\n>>> {s["name"]}\n$ {cmd}\n");proc=None
+     await emit(i,"system",f"\n>>> {s['name']}\n$ {cmd}\n",step_id);proc=None
      try:
       proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,start_new_session=True)
       async def rd(st,k):
@@ -245,12 +245,12 @@ async def run(i):
       if proc:
        kill_process_group(proc)
        await proc.wait()
-      step_code=124;await emit(i,"stderr",f"[{s["name"]}] 超时\n")
+      step_code=124;await emit(i,"stderr",f"[{s['name']}] 超时\n",step_id)
      except Exception as e:
-      step_code=1;await emit(i,"stderr",f"[{s["name"]}] {e}\n")
+      step_code=1;await emit(i,"stderr",f"[{s['name']}] {e}\n",step_id)
      step_failed=step_code!=0
-     if step_failed:await emit(i,"system",f"[{s["name"]}] 失败 exit={step_code}\n")
-     else:await emit(i,"system",f"[{s["name"]}] 完成\n")
+     if step_failed:await emit(i,"system",f"[{s['name']}] 失败 exit={step_code}\n",step_id)
+     else:await emit(i,"system",f"[{s['name']}] 完成\n",step_id)
     if step_failed:
      ok=False;code=step_code
      if not s["continue_on_error"]:break
@@ -276,8 +276,7 @@ async def run(i):
 async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
  p=d.get(Project,pid)
  if not p or not p.enabled:raise HTTPException(404,"项目不存在或已禁用")
- if locks[pid].locked():raise HTTPException(409,"该项目正在部署")
- j=Deployment(project_id=pid,user_id=u.id,config_snapshot=snapshot_project(p,d));d.add(j);d.commit();d.refresh(j);return {"id":j.id,"status":"pending"}
+  j=Deployment(project_id=pid,user_id=u.id,config_snapshot=snapshot_project(p,d));d.add(j);d.commit();d.refresh(j);return {"id":j.id,"status":"pending"}
 @app.get("/api/deployments")
 def deployments(project_id:int|None=None,status:str|None=None,page:int=1,page_size:int=20,d:Session=Depends(dbdep),u=Depends(user)):
  page=max(1,page);page_size=max(1,min(page_size,100))
@@ -295,14 +294,40 @@ def deployment(did:int,d:Session=Depends(dbdep),u=Depends(user)):
  row=d.query(Deployment,Project.name,User.username).outerjoin(Project,Project.id==Deployment.project_id).outerjoin(User,User.id==Deployment.user_id).filter(Deployment.id==did).first()
  if not row:raise HTTPException(404,"部署不存在")
  j,project_name,username=row
- return {"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at}
+ return {"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at,"note":j.note,"before_sha":j.before_sha,"after_sha":j.after_sha,"retry_of":j.retry_of}
 @app.get("/api/deployments/{did}/logs")
 def logs(did:int,d:Session=Depends(dbdep),u=Depends(user)):return [{"id":x.id,"step_id":x.step_id,"stream":x.stream,"message":x.message} for x in d.query(Log).filter_by(deployment_id=did).order_by(Log.id)]
+
+@app.post("/api/deployments/{did}/cancel")
+def cancel_deployment(did:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
+ j=d.get(Deployment,did)
+ if not j:raise HTTPException(404,"部署不存在")
+ if j.status not in ("pending","running"):raise HTTPException(409,"部署已经结束")
+ j.cancel_requested=True
+ if j.status=="pending":j.status="cancelled";j.exit_code=130;j.finished_at=now()
+ d.commit()
+ return {"ok":True,"status":j.status}
+
+@app.post("/api/deployments/{did}/retry")
+def retry_deployment(did:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
+ old=d.get(Deployment,did)
+ if not old:raise HTTPException(404,"部署不存在")
+ if old.status not in ("failed","cancelled"):raise HTTPException(409,"只有失败或取消的部署可以重试")
+ j=Deployment(project_id=old.project_id,user_id=u.id,status="pending",config_snapshot=old.config_snapshot,note=old.note,retry_of=old.id)
+ d.add(j);d.commit();d.refresh(j)
+ return {"id":j.id,"status":j.status,"retry_of":old.id}
+
+@app.post("/api/deployments/{did}/note")
+def update_deployment_note(did:int,note:str,d:Session=Depends(dbdep),u=Depends(role("admin","operator"))):
+ j=d.get(Deployment,did)
+ if not j:raise HTTPException(404,"部署不存在")
+ j.note=note[:2000];d.commit()
+ return {"ok":True,"note":j.note}
 @app.get("/api/projects/{pid}/yaml")
 def yaml_export(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator","viewer"))):
  p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
- return yaml.safe_dump({"name":p.name,"branch":p.branch,"shell":p.shell,"steps":[{"name":s["name"],"type":s["type"],"cwd":s["cwd"],"command":s["command"],"enabled":s["enabled"],"timeout":s["timeout"],"continue_on_error":s["continue_on_error"]} for s in p.steps]},allow_unicode=True,sort_keys=False)
+ return yaml.safe_dump({"name":p.name,"description":p.description,"enabled":p.enabled,"branch":p.branch,"shell":p.shell,"steps":[{"name":s.name,"type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error} for s in p.steps],"environment":[{"key":e.key,"value":"***" if e.is_secret else e.value,"secret":e.is_secret} for e in p.envs]},allow_unicode=True,sort_keys=False)
 @app.websocket("/ws/deployments/{did}")
 async def ws(w:WebSocket,did:int):
  if not w.scope.get("session",{}).get("user_id"):
