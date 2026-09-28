@@ -1,7 +1,8 @@
 import asyncio
 from collections import defaultdict
-from config import SessionLocal
-from models import Log
+
+from config import SessionLocal, now
+from models import Deployment, Log
 
 class LogBroker:
     def __init__(self, batch_size=20):
@@ -28,10 +29,13 @@ class LogBroker:
             d.add_all(objects)
             d.commit()
             ids = [x.id for x in objects]
+        except Exception:
+            d.rollback()
+            raise
         finally:
             d.close()
-            self.buffers[deployment_id].clear()
 
+        self.buffers[deployment_id].clear()
         if queues is not None:
             for index, (step_id, stream, message) in enumerate(rows):
                 payload = {
@@ -47,10 +51,10 @@ class LogBroker:
     async def finish(self, deployment_id, status, code, queues=None):
         async with self.locks[deployment_id]:
             await self.flush(deployment_id, queues)
+
         d = SessionLocal()
         try:
-            from config import now
-            job = d.get(__import__("models").Deployment, deployment_id)
+            job = d.get(Deployment, deployment_id)
             if not job:
                 return
             job.status = status
@@ -59,6 +63,7 @@ class LogBroker:
             d.commit()
         finally:
             d.close()
+
         if queues is not None:
             payload = {"type": "status", "status": status, "exit_code": code}
             for q in list(queues[deployment_id]):
