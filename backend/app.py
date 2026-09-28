@@ -459,11 +459,13 @@ async def ws(w: WebSocket, did: int):
     q = asyncio.Queue()
     queues[did].add(q)
     try:
+        initial_steps = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
         await w.send_json({
             "type": "connected",
             "deployment_id": did,
             "status": job.status,
             "exit_code": job.exit_code,
+            "steps": [{"id": s.id, "name": s.name, "status": s.status, "started_at": s.started_at, "finished_at": s.finished_at, "exit_code": s.exit_code, "duration_ms": s.duration_ms, "error": s.error} for s in initial_steps],
         })
         await w.send_json({
             "type": "snapshot",
@@ -480,6 +482,7 @@ async def ws(w: WebSocket, did: int):
                 d = SessionLocal()
                 try:
                     job = d.get(Deployment, did)
+                    step_rows = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
                     new = (
                         d.query(Log)
                         .filter(Log.deployment_id == did, Log.id > last_log)
@@ -500,6 +503,7 @@ async def ws(w: WebSocket, did: int):
                             "type": "status",
                             "status": job.status,
                             "exit_code": job.exit_code,
+                            "steps": [{"id": s.id, "name": s.name, "status": s.status, "started_at": s.started_at, "finished_at": s.finished_at, "exit_code": s.exit_code, "duration_ms": s.duration_ms, "error": s.error} for s in step_rows],
                         })
                         if job.status in ("success", "failed", "cancelled"):
                             break
