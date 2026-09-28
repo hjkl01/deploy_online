@@ -13,7 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from config import SessionLocal, now, settings
 from database import init_database
-from models import Deployment, Env, Log, Project, Step, User
+from models import Deployment, DeploymentStep, Env, Log, Project, Step, User
 from runtime import login_attempts, queues
 from schemas import EnvIn, Login, ProjectIn, StepIn, UserIn
 from security import encrypt_secret, hash_password, verify_password
@@ -268,6 +268,10 @@ def deploy(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "opera
         raise HTTPException(404, "项目不存在或已禁用")
     job = Deployment(project_id=pid, user_id=u.id, config_snapshot=snapshot_project(p))
     d.add(job)
+    d.flush()
+    for i, step in enumerate(p.steps):
+        if step.enabled:
+            d.add(DeploymentStep(deployment_id=job.id, source_step_id=step.id, position=i, name=step.name))
     d.commit()
     d.refresh(job)
     return {"id": job.id, "status": "pending"}
@@ -330,6 +334,7 @@ def deployment(did: int, d: Session = Depends(dbdep), u=Depends(user)):
     if not row:
         raise HTTPException(404, "部署不存在")
     j, project_name, username = row
+    step_rows = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
     return {
         "id": j.id,
         "project_id": j.project_id,
@@ -345,6 +350,7 @@ def deployment(did: int, d: Session = Depends(dbdep), u=Depends(user)):
         "before_sha": j.before_sha,
         "after_sha": j.after_sha,
         "retry_of": j.retry_of,
+        "steps": [{"id": s.id, "source_step_id": s.source_step_id, "position": s.position, "name": s.name, "status": s.status, "started_at": s.started_at, "finished_at": s.finished_at, "exit_code": s.exit_code, "duration_ms": s.duration_ms, "error": s.error} for s in step_rows],
     }
 
 @app.get("/api/deployments/{did}/logs")
