@@ -14,7 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from config import SessionLocal, now, settings
 from database import init_database
 from models import Deployment, DeploymentStep, Env, Log, Project, Step, User
-from runtime import login_attempts, queues
+from runtime import login_attempts
 from schemas import EnvIn, Login, ProjectIn, StepIn, UserIn
 from security import encrypt_secret, hash_password, verify_password
 from services.deployment import snapshot_project
@@ -464,16 +464,14 @@ async def ws(w: WebSocket, did: int):
     d = SessionLocal()
     job = d.get(Deployment, did)
     rows = d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all()
+    initial_steps = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
     d.close()
     if not job:
         await w.close(code=1008)
         return
 
     await w.accept()
-    q = asyncio.Queue()
-    queues[did].add(q)
     try:
-        initial_steps = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
         await w.send_json({
             "type": "connected",
             "deployment_id": did,
@@ -490,10 +488,9 @@ async def ws(w: WebSocket, did: int):
         })
         last_log = rows[-1].id if rows else 0
         while True:
+            await asyncio.sleep(1)
+            d = SessionLocal()
             try:
-                await w.send_json(await asyncio.wait_for(q.get(), 2))
-            except asyncio.TimeoutError:
-                d = SessionLocal()
                 try:
                     job = d.get(Deployment, did)
                     step_rows = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
@@ -521,12 +518,10 @@ async def ws(w: WebSocket, did: int):
                         })
                         if job.status in ("success", "failed", "cancelled"):
                             break
-                finally:
-                    d.close()
+            finally:
+                d.close()
     except WebSocketDisconnect:
         pass
-    finally:
-        queues[did].discard(q)
 
 @app.get("/{path:path}")
 def frontend(path: str):
