@@ -1,4 +1,4 @@
-import asyncio,os,shlex,signal
+import asyncio,os,shlex,signal,json,hashlib,shutil
 from datetime import datetime,timezone
 from pathlib import Path
 from collections import defaultdict
@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings
 import bcrypt
 from sqlalchemy import create_engine,Column,Integer,String,Text,Boolean,ForeignKey,DateTime
 from sqlalchemy.orm import declarative_base,sessionmaker,Session,relationship
+from cryptography.fernet import Fernet, InvalidToken
 
 class Settings(BaseSettings):
  model_config={"env_file":".env","env_file_encoding":"utf-8","extra":"ignore"}
@@ -29,13 +30,26 @@ class Step(Base):
 class Env(Base):
  __tablename__="envs";id=Column(Integer,primary_key=True);project_id=Column(ForeignKey("projects.id"));key=Column(String(255));value=Column(Text,default="");is_secret=Column(Boolean,default=False)
 class Deployment(Base):
- __tablename__="deployments";id=Column(Integer,primary_key=True);project_id=Column(Integer);user_id=Column(Integer);status=Column(String(30),default="pending");exit_code=Column(Integer);created_at=Column(DateTime,default=now);started_at=Column(DateTime);finished_at=Column(DateTime)
+ __tablename__="deployments";id=Column(Integer,primary_key=True);project_id=Column(Integer);user_id=Column(Integer);status=Column(String(30),default="pending");exit_code=Column(Integer);created_at=Column(DateTime,default=now);started_at=Column(DateTime);finished_at=Column(DateTime);config_snapshot=Column(Text);note=Column(Text,default="");cancel_requested=Column(Boolean,default=False);before_sha=Column(String(64));after_sha=Column(String(64));retry_of=Column(Integer)
+ Index("ix_deployments_project_created", "project_id", "created_at");Index("ix_deployments_status_created", "status", "created_at")
 class Log(Base):
- __tablename__="logs";id=Column(Integer,primary_key=True);deployment_id=Column(Integer,index=True);stream=Column(String(20));message=Column(Text);created_at=Column(DateTime,default=now)
+ __tablename__="logs";id=Column(Integer,primary_key=True);deployment_id=Column(Integer,index=True);step_id=Column(Integer,index=True);stream=Column(String(20));message=Column(Text);created_at=Column(DateTime,default=now)
 db_path=Path(settings.database_url.replace("sqlite:///","")).expanduser()
 if not db_path.is_absolute():db_path=Path(__file__).resolve().parent/db_path
 db_path.parent.mkdir(parents=True,exist_ok=True)
 Base.metadata.create_all(engine)
+def ensure_schema():
+ with engine.begin() as c:
+  for table, column, ddl in [("deployments","config_snapshot","TEXT"),("deployments","note","TEXT"),("deployments","cancel_requested","BOOLEAN DEFAULT 0"),("deployments","before_sha","VARCHAR(64)"),("deployments","after_sha","VARCHAR(64)"),("deployments","retry_of","INTEGER"),("logs","step_id","INTEGER")]:
+   cols={x[1] for x in c.exec_driver_sql(f"PRAGMA table_info({table})")}
+   if column not in cols:c.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+ensure_schema()
+FERNET=Fernet(__import__("base64").urlsafe_b64encode(hashlib.sha256(settings.secret_key.encode()).digest()))
+def encrypt_secret(value:str)->str:return "enc:"+FERNET.encrypt(value.encode()).decode()
+def decrypt_secret(value:str)->str:
+ if not value.startswith("enc:"):return value
+ try:return FERNET.decrypt(value[4:].encode()).decode()
+ except InvalidToken:raise RuntimeError("无法解密环境变量，请检查 SECRET_KEY")
 def hash_password(password:str):
  if len(password.encode()) > 72:
   raise RuntimeError("ADMIN_PASSWORD 不能超过 72 字节")
@@ -44,6 +58,9 @@ def verify_password(password:str,password_hash:str):
  try:return bcrypt.checkpw(password.encode(),password_hash.encode())
  except (ValueError,TypeError):return False
 d=SessionLocal()
+for _env in d.query(Env).filter_by(is_secret=True).all():
+ if _env.value and not _env.value.startswith("enc:"):_env.value=encrypt_secret(_env.value)
+d.commit()
 if not d.query(User).first():
  d.add(User(username=settings.admin_username,password_hash=hash_password(settings.admin_password),role="admin"))
  d.commit()
@@ -81,12 +98,14 @@ def check(x):
  if x.shell not in ("bash","zsh"):raise HTTPException(400,"shell 只能是 bash 或 zsh")
  home=Path.home().resolve()
  for s in x.steps:
-  if s.cwd != "~" and not s.cwd.startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
-  relative="" if s.cwd == "~" else s.cwd[2:]
+  if s["cwd"] != "~" and not s["cwd"].startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
+  relative="" if s["cwd"] == "~" else s["cwd"][2:]
   target=(home / relative).resolve()
   if target != home and home not in target.parents:raise HTTPException(400,"cwd 不能越出用户家目录")
  for e in x.environment:
   if not e.key or "=" in e.key or "\x00" in e.key:raise HTTPException(400,"环境变量名无效")
+def snapshot_project(p,d):
+ return json.dumps({"project":{"name":p.name,"branch":p.branch,"shell":p.shell,"enabled":p.enabled},"steps":[{"id":s.id,"name":s["name"],"type":s["type"],"cwd":s["cwd"],"command":s["command"],"enabled":s["enabled"],"timeout":s["timeout"],"continue_on_error":s["continue_on_error"],"position":s.position} for s in p.steps],"environment":[{"key":e.key,"value":e.value,"is_secret":e.is_secret} for e in p.envs]},ensure_ascii=False)
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
@@ -140,12 +159,15 @@ def projects(d:Session=Depends(dbdep),u=Depends(role("admin","operator","viewer"
 def project(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator","viewer"))):
  p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
- x=po(p);x["steps"]=[{"id":s.id,"name":s.name,"step_type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error,"position":s.position} for s in p.steps];x["environment"]=[{"id":e.id,"key":e.key,"value":"" if e.is_secret else e.value,"is_secret":e.is_secret} for e in p.envs];return x
+ x=po(p);x["steps"]=[{"id":s.id,"name":s["name"],"step_type":s["type"],"cwd":s["cwd"],"command":s["command"],"enabled":s["enabled"],"timeout":s["timeout"],"continue_on_error":s["continue_on_error"],"position":s.position} for s in p.steps];x["environment"]=[{"id":e.id,"key":e.key,"value":"" if e.is_secret else e.value,"is_secret":e.is_secret} for e in p.envs];return x
 @app.post("/api/projects")
 def create(x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
  check(x);p=Project(name=x.name,description=x.description,branch=x.branch,shell=x.shell,enabled=x.enabled);d.add(p);d.flush()
  for i,s in enumerate(x.steps):d.add(Step(project_id=p.id,position=i,**s.model_dump()))
- for e in x.environment:d.add(Env(project_id=p.id,**e.model_dump()))
+ for e in x.environment:
+  data=e.model_dump()
+  if data["is_secret"] and data["value"]:data["value"]=encrypt_secret(data["value"])
+  d.add(Env(project_id=p.id,**data))
  d.commit();d.refresh(p);return po(p)
 @app.put("/api/projects/{pid}")
 def update(pid:int,x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))):
@@ -159,6 +181,7 @@ def update(pid:int,x:ProjectIn,d:Session=Depends(dbdep),u=Depends(role("admin"))
   data=e.model_dump()
   if data["is_secret"] and data["value"]=="" and data["key"] in existing_secret:
    data["value"]=existing_secret[data["key"]]
+  if data["is_secret"] and data["value"] and not data["value"].startswith("enc:"):data["value"]=encrypt_secret(data["value"])
   d.add(Env(project_id=pid,**data))
  d.commit();return po(p)
 @app.delete("/api/projects/{pid}")
@@ -166,8 +189,8 @@ def delete(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin"))):
  p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
  d.delete(p);d.commit();return {"ok":True}
-async def emit(i,stream,msg):
- d=SessionLocal();d.add(Log(deployment_id=i,stream=stream,message=msg));d.commit(); item=d.query(Log).filter_by(deployment_id=i).order_by(Log.id.desc()).first(); d.close()
+async def emit(i,stream,msg,step_id=None):
+ d=SessionLocal();d.add(Log(deployment_id=i,step_id=step_id,stream=stream,message=msg));d.commit(); item=d.query(Log).filter_by(deployment_id=i).order_by(Log.id.desc()).first(); d.close()
  for q in list(queues[i]):await q.put({"type":"log","id":item.id,"stream":stream,"message":msg})
 async def finish(i,status,code):
  d=SessionLocal();j=d.get(Deployment,i)
@@ -191,43 +214,50 @@ async def run(i):
   await emit(i,"stderr","项目不存在，部署终止\n")
   await finish(i,"failed",1)
   return
- steps=d.query(Step).filter_by(project_id=p.id).order_by(Step.position).all();envs=d.query(Env).filter_by(project_id=p.id).all();d.close()
+ cfg=json.loads(j.config_snapshot) if j.config_snapshot else json.loads(snapshot_project(p,d))
+ d.close()
+ steps=cfg["steps"];envs=cfg["environment"];project_cfg=cfg["project"]
  async with locks[p.id]:
   d=SessionLocal();j=d.get(Deployment,i)
   if not j:d.close();return
   j.status="running";j.started_at=now();d.commit();d.close()
-  env=os.environ.copy();env.update({e.key:e.value for e in envs});ok=True;code=0;finished=False;proc=None
+  env=os.environ.copy();env.update({e["key"]:decrypt_secret(e["value"]) if e["is_secret"] else e["value"] for e in envs});ok=True;code=0;finished=False;proc=None;cancelled=False
   try:
-   await emit(i,"system",f"开始部署 {p.name}\nShell: {p.shell}\n")
+   await emit(i,"system",f'开始部署 {project_cfg["name"]}\nShell: {project_cfg["shell"]}\n')
    for s in steps:
-    if not s.enabled:continue
-    cwd=Path(s.cwd).expanduser().resolve();cmd=("git checkout "+shlex.quote(p.branch)+" && git pull --ff-only") if s.step_type=="git_pull" else s.command
+    d=SessionLocal();cancel_requested=bool(d.get(Deployment,i).cancel_requested);d.close()
+    if cancel_requested:cancelled=True;break
+    if not s["enabled"]:continue
+    cwd=Path(s["cwd"]).expanduser().resolve();cmd=("git checkout "+shlex.quote(project_cfg["branch"])+" && git pull --ff-only") if s["type"]=="git_pull" else s["command"]
+    step_id=s.get("id")
     step_failed=False;step_code=0
     if not cwd.is_dir():
-     await emit(i,"stderr",f"[{s.name}] cwd 不存在: {cwd}\n");step_failed=True;step_code=1
+     await emit(i,"stderr",f"[{s["name"]}] cwd 不存在: {cwd}\n");step_failed=True;step_code=1
     elif cmd.strip():
-     await emit(i,"system",f"\n>>> {s.name}\n$ {cmd}\n");proc=None
+     await emit(i,"system",f"\n>>> {s["name"]}\n$ {cmd}\n");proc=None
      try:
       proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,start_new_session=True)
       async def rd(st,k):
        while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
-      await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s.timeout)
+      await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s["timeout"])
       step_code=proc.returncode
      except asyncio.TimeoutError:
       if proc:
        kill_process_group(proc)
        await proc.wait()
-      step_code=124;await emit(i,"stderr",f"[{s.name}] 超时\n")
+      step_code=124;await emit(i,"stderr",f"[{s["name"]}] 超时\n")
      except Exception as e:
-      step_code=1;await emit(i,"stderr",f"[{s.name}] {e}\n")
+      step_code=1;await emit(i,"stderr",f"[{s["name"]}] {e}\n")
      step_failed=step_code!=0
-     if step_failed:await emit(i,"system",f"[{s.name}] 失败 exit={step_code}\n")
-     else:await emit(i,"system",f"[{s.name}] 完成\n")
+     if step_failed:await emit(i,"system",f"[{s["name"]}] 失败 exit={step_code}\n")
+     else:await emit(i,"system",f"[{s["name"]}] 完成\n")
     if step_failed:
      ok=False;code=step_code
-     if not s.continue_on_error:break
-   await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n")
-   await finish(i,"success" if ok else "failed",code)
+     if not s["continue_on_error"]:break
+   if cancelled:
+    await emit(i,"system","\n部署已取消\n");await finish(i,"cancelled",130)
+   else:
+    await emit(i,"system",f"\n部署{'成功' if ok else '失败'}\n");await finish(i,"success" if ok else "failed",code)
    finished=True
   except asyncio.CancelledError:
    if proc and proc.returncode is None:
@@ -247,14 +277,14 @@ async def deploy(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operat
  p=d.get(Project,pid)
  if not p or not p.enabled:raise HTTPException(404,"项目不存在或已禁用")
  if locks[pid].locked():raise HTTPException(409,"该项目正在部署")
- j=Deployment(project_id=pid,user_id=u.id);d.add(j);d.commit();d.refresh(j);asyncio.create_task(run(j.id));return {"id":j.id,"status":"pending"}
+ j=Deployment(project_id=pid,user_id=u.id,config_snapshot=snapshot_project(p,d));d.add(j);d.commit();d.refresh(j);return {"id":j.id,"status":"pending"}
 @app.get("/api/deployments")
 def deployments(project_id:int|None=None,status:str|None=None,page:int=1,page_size:int=20,d:Session=Depends(dbdep),u=Depends(user)):
  page=max(1,page);page_size=max(1,min(page_size,100))
  q=d.query(Deployment,Project.name,User.username).outerjoin(Project,Project.id==Deployment.project_id).outerjoin(User,User.id==Deployment.user_id)
  if project_id is not None:q=q.filter(Deployment.project_id==project_id)
  if status is not None:
-  if status not in ("pending","running","success","failed"):raise HTTPException(400,"状态无效")
+  if status not in ("pending","running","success","failed","cancelled"):raise HTTPException(400,"状态无效")
   q=q.filter(Deployment.status==status)
  total=q.count()
  rows=q.order_by(Deployment.id.desc()).offset((page-1)*page_size).limit(page_size).all()
@@ -267,12 +297,12 @@ def deployment(did:int,d:Session=Depends(dbdep),u=Depends(user)):
  j,project_name,username=row
  return {"id":j.id,"project_id":j.project_id,"project_name":project_name or f"项目 #{j.project_id}","user_id":j.user_id,"username":username or "-","status":j.status,"exit_code":j.exit_code,"created_at":j.created_at,"started_at":j.started_at,"finished_at":j.finished_at}
 @app.get("/api/deployments/{did}/logs")
-def logs(did:int,d:Session=Depends(dbdep),u=Depends(user)):return [{"id":x.id,"stream":x.stream,"message":x.message} for x in d.query(Log).filter_by(deployment_id=did).order_by(Log.id)]
+def logs(did:int,d:Session=Depends(dbdep),u=Depends(user)):return [{"id":x.id,"step_id":x.step_id,"stream":x.stream,"message":x.message} for x in d.query(Log).filter_by(deployment_id=did).order_by(Log.id)]
 @app.get("/api/projects/{pid}/yaml")
 def yaml_export(pid:int,d:Session=Depends(dbdep),u=Depends(role("admin","operator","viewer"))):
  p=d.get(Project,pid)
  if not p:raise HTTPException(404,"项目不存在")
- return yaml.safe_dump({"name":p.name,"branch":p.branch,"shell":p.shell,"steps":[{"name":s.name,"type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error} for s in p.steps]},allow_unicode=True,sort_keys=False)
+ return yaml.safe_dump({"name":p.name,"branch":p.branch,"shell":p.shell,"steps":[{"name":s["name"],"type":s["type"],"cwd":s["cwd"],"command":s["command"],"enabled":s["enabled"],"timeout":s["timeout"],"continue_on_error":s["continue_on_error"]} for s in p.steps]},allow_unicode=True,sort_keys=False)
 @app.websocket("/ws/deployments/{did}")
 async def ws(w:WebSocket,did:int):
  if not w.scope.get("session",{}).get("user_id"):
@@ -283,10 +313,15 @@ async def ws(w:WebSocket,did:int):
   if not j:
    await w.close(code=1008);return
   await w.send_json({"type":"connected","deployment_id":did,"status":j.status,"exit_code":j.exit_code})
-  await w.send_json({"type":"snapshot","logs":[{"id":x.id,"stream":x.stream,"message":x.message} for x in rows]})
+  await w.send_json({"type":"snapshot","logs":[{"id":x.id,"step_id":x.step_id,"stream":x.stream,"message":x.message} for x in rows]})
+  last_log=rows[-1].id if rows else 0
   while True:
-   try:await w.send_json(await asyncio.wait_for(q.get(),10))
-   except asyncio.TimeoutError:await w.send_json({"type":"ping"})
+   try:await w.send_json(await asyncio.wait_for(q.get(),2))
+   except asyncio.TimeoutError:
+    d=SessionLocal();j=d.get(Deployment,did);new=d.query(Log).filter(Log.deployment_id==did,Log.id>last_log).order_by(Log.id).all();last_log=new[-1].id if new else last_log
+    for x in new:await w.send_json({"type":"log","id":x.id,"step_id":x.step_id,"stream":x.stream,"message":x.message})
+    if j:await w.send_json({"type":"status","status":j.status,"exit_code":j.exit_code})
+    d.close()
  except WebSocketDisconnect:pass
  finally:queues[did].discard(q)
 
