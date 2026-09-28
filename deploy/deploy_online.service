@@ -1,5 +1,5 @@
 [Unit]
-Description=deploy_online deployment manager
+Description=deploy_online API server
 After=network.target
 
 [Service]
