@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from config import SessionLocal, now
-from models import Deployment, Project
+from models import Deployment, DeploymentStep, Project
 from security import decrypt_secret
 from .executor import git_sha, kill_process_group, shell_command
 from .logging import broker
@@ -174,6 +174,15 @@ async def run(deployment_id):
                 if not step["enabled"]:
                     continue
 
+                d = SessionLocal()
+                step_row = d.query(DeploymentStep).filter_by(deployment_id=deployment_id, source_step_id=step.get("id")).first()
+                if step_row:
+                    step_row.status = "running"
+                    step_row.started_at = now()
+                    d.commit()
+                finally_d = d
+                d.close()
+
                 if step["type"] == "git_pull":
                     before_sha = await git_sha(Path(step["cwd"]).expanduser().resolve())
                     if before_sha:
@@ -192,6 +201,21 @@ async def run(deployment_id):
                 if step_after_sha:
                     after_sha = step_after_sha
 
+                d = SessionLocal()
+                try:
+                    step_row = d.query(DeploymentStep).filter_by(deployment_id=deployment_id, source_step_id=step.get("id")).first()
+                    if step_row:
+                        step_row.status = "cancelled" if was_cancelled else "failed"
+                        step_row.exit_code = code
+                        step_row.finished_at = now()
+                        if step_row.started_at:
+                            step_row.duration_ms = max(0, int((step_row.finished_at - step_row.started_at).total_seconds() * 1000))
+                        if code != 0:
+                            step_row.error = f"exit={code}"
+                        d.commit()
+                finally:
+                    d.close()
+
                 if code != 0:
                     success = False
                     exit_code = code
@@ -203,6 +227,18 @@ async def run(deployment_id):
                     if was_cancelled or not step["continue_on_error"]:
                         break
                 else:
+                    d = SessionLocal()
+                    try:
+                        step_row = d.query(DeploymentStep).filter_by(deployment_id=deployment_id, source_step_id=step.get("id")).first()
+                        if step_row:
+                            step_row.status = "success"
+                            step_row.exit_code = 0
+                            step_row.finished_at = now()
+                            if step_row.started_at:
+                                step_row.duration_ms = max(0, int((step_row.finished_at - step_row.started_at).total_seconds() * 1000))
+                            d.commit()
+                    finally:
+                        d.close()
                     await broker.emit(
                         deployment_id, "system",
                         f'[{step["name"]}] 完成\n',
