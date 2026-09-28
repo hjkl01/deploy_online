@@ -1,4 +1,4 @@
-import asyncio,os,shlex,signal,json,hashlib,shutil
+import asyncio,os,shlex,signal,json,hashlib,shutil,time
 from datetime import datetime,timezone
 from pathlib import Path
 from collections import defaultdict
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
  model_config={"env_file":".env","env_file_encoding":"utf-8","extra":"ignore"}
  database_url:str="sqlite:///./data/deploy_online.db";secret_key:str="change-me";admin_username:str="admin";admin_password:str="admin"
 settings=Settings();Path("data").mkdir(exist_ok=True)
-engine=create_engine(settings.database_url,connect_args={"check_same_thread":False});SessionLocal=sessionmaker(bind=engine,expire_on_commit=False);Base=declarative_base();now=lambda:datetime.now(timezone.utc)
+engine=create_engine(settings.database_url,connect_args={"check_same_thread":False,"timeout":30});SessionLocal=sessionmaker(bind=engine,expire_on_commit=False);Base=declarative_base();now=lambda:datetime.now(timezone.utc)
 class User(Base):
  __tablename__="users";id=Column(Integer,primary_key=True);username=Column(String(100),unique=True);password_hash=Column(String(255));role=Column(String(20),default="viewer")
 class Project(Base):
@@ -38,6 +38,12 @@ db_path=Path(settings.database_url.replace("sqlite:///","")).expanduser()
 if not db_path.is_absolute():db_path=Path(__file__).resolve().parent/db_path
 db_path.parent.mkdir(parents=True,exist_ok=True)
 Base.metadata.create_all(engine)
+def configure_sqlite():
+ if settings.database_url.startswith("sqlite"):
+  with engine.begin() as c:
+   c.exec_driver_sql("PRAGMA journal_mode=WAL")
+   c.exec_driver_sql("PRAGMA synchronous=NORMAL")
+configure_sqlite()
 def ensure_schema():
  with engine.begin() as c:
   for table, column, ddl in [("deployments","config_snapshot","TEXT"),("deployments","note","TEXT"),("deployments","cancel_requested","BOOLEAN DEFAULT 0"),("deployments","before_sha","VARCHAR(64)"),("deployments","after_sha","VARCHAR(64)"),("deployments","retry_of","INTEGER"),("logs","step_id","INTEGER")]:
@@ -78,9 +84,9 @@ class UserIn(BaseModel):
 app=FastAPI(title="deploy_online");
 STATIC_DIR=Path(__file__).resolve().parent/"static"
 if (STATIC_DIR/"_next").is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
-app.add_middleware(SessionMiddleware,secret_key=settings.secret_key)
+app.add_middleware(SessionMiddleware,secret_key=settings.secret_key,max_age=86400,same_site="lax",https_only=False)
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
-locks=defaultdict(asyncio.Lock);queues=defaultdict(set)
+locks=defaultdict(asyncio.Lock);queues=defaultdict(set);login_attempts=defaultdict(list)
 def dbdep():
  d=SessionLocal()
  try:yield d
@@ -95,7 +101,9 @@ def role(*roles):
   return u
  return dep
 def check(x):
- if x.shell not in ("bash","zsh"):raise HTTPException(400,"shell 只能是 bash 或 zsh")
+ if not x.name.strip() or len(x.name)>200:raise HTTPException(400,"项目名称无效")
+ if not x.branch.strip() or len(x.branch)>255:raise HTTPException(400,"分支名称无效")
+ if x.shell not in ("bash","zsh") or not shutil.which(x.shell):raise HTTPException(400,f"shell 不可用: {x.shell}")
  home=Path.home().resolve()
  for s in x.steps:
   if s["cwd"] != "~" and not s["cwd"].startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
@@ -103,7 +111,9 @@ def check(x):
   target=(home / relative).resolve()
   if target != home and home not in target.parents:raise HTTPException(400,"cwd 不能越出用户家目录")
  for e in x.environment:
-  if not e.key or "=" in e.key or "\x00" in e.key:raise HTTPException(400,"环境变量名无效")
+  if not e.key or "=" in e.key or "\x00" in e.key or len(e.key)>255:raise HTTPException(400,"环境变量名无效")
+ for s in x.steps:
+  if len(s.name)>200 or len(s.command)>50000:raise HTTPException(400,"步骤名称或命令过长")
 def snapshot_project(p,d):
  return json.dumps({"project":{"name":p.name,"branch":p.branch,"shell":p.shell,"enabled":p.enabled},"steps":[{"id":s.id,"name":s["name"],"type":s["type"],"cwd":s["cwd"],"command":s["command"],"enabled":s["enabled"],"timeout":s["timeout"],"continue_on_error":s["continue_on_error"],"position":s.position} for s in p.steps],"environment":[{"key":e.key,"value":e.value,"is_secret":e.is_secret} for e in p.envs]},ensure_ascii=False)
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
@@ -111,9 +121,13 @@ def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p
 def health():return {"status":"ok"}
 @app.post("/api/auth/login")
 def login(x:Login,request:Request,d:Session=Depends(dbdep)):
+ key=f"{request.client.host if request.client else '-'}:{x.username}"
+ now_ts=time.time();login_attempts[key]=[t for t in login_attempts[key] if now_ts-t<60]
+ if len(login_attempts[key])>=5:raise HTTPException(429,"登录失败次数过多，请 1 分钟后再试")
  u=d.query(User).filter_by(username=x.username).first()
- if not u or not verify_password(x.password,u.password_hash):raise HTTPException(401,"用户名或密码错误")
- request.session["user_id"]=u.id;return {"id":u.id,"username":u.username,"role":u.role}
+ if not u or not verify_password(x.password,u.password_hash):
+  login_attempts[key].append(now_ts);raise HTTPException(401,"用户名或密码错误")
+ login_attempts.pop(key,None);request.session["user_id"]=u.id;return {"id":u.id,"username":u.username,"role":u.role}
 @app.post("/api/auth/logout")
 def logout(request:Request):request.session.clear();return {"ok":True}
 @app.get("/api/auth/me")
