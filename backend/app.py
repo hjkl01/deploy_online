@@ -9,48 +9,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel,Field
-from pydantic_settings import BaseSettings
 import bcrypt
-from sqlalchemy import create_engine,Column,Integer,String,Text,Boolean,ForeignKey,DateTime
-from sqlalchemy.orm import declarative_base,sessionmaker,Session,relationship
+from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet, InvalidToken
 
-class Settings(BaseSettings):
- model_config={"env_file":".env","env_file_encoding":"utf-8","extra":"ignore"}
- database_url:str="sqlite:///./data/deploy_online.db";secret_key:str="change-me";admin_username:str="admin";admin_password:str="admin";log_retention_days:int=30
-settings=Settings();Path("data").mkdir(exist_ok=True)
-engine=create_engine(settings.database_url,connect_args={"check_same_thread":False,"timeout":30});SessionLocal=sessionmaker(bind=engine,expire_on_commit=False);Base=declarative_base();now=lambda:datetime.now(timezone.utc)
-class User(Base):
- __tablename__="users";id=Column(Integer,primary_key=True);username=Column(String(100),unique=True);password_hash=Column(String(255));role=Column(String(20),default="viewer")
-class Project(Base):
- __tablename__="projects";id=Column(Integer,primary_key=True);name=Column(String(200));description=Column(Text,default="");branch=Column(String(255),default="main");shell=Column(String(20),default="bash");enabled=Column(Boolean,default=True)
- steps=relationship("Step",cascade="all,delete-orphan",order_by="Step.position");envs=relationship("Env",cascade="all,delete-orphan")
-class Step(Base):
- __tablename__="steps";id=Column(Integer,primary_key=True);project_id=Column(ForeignKey("projects.id"));name=Column(String(200));step_type=Column(String(30),default="command");cwd=Column(String(1000),default="~");command=Column(Text,default="");enabled=Column(Boolean,default=True);timeout=Column(Integer,default=3600);continue_on_error=Column(Boolean,default=False);position=Column(Integer,default=0)
-class Env(Base):
- __tablename__="envs";id=Column(Integer,primary_key=True);project_id=Column(ForeignKey("projects.id"));key=Column(String(255));value=Column(Text,default="");is_secret=Column(Boolean,default=False)
-class Deployment(Base):
- __tablename__="deployments";id=Column(Integer,primary_key=True);project_id=Column(Integer);user_id=Column(Integer);status=Column(String(30),default="pending");exit_code=Column(Integer);created_at=Column(DateTime,default=now);started_at=Column(DateTime);finished_at=Column(DateTime);config_snapshot=Column(Text);note=Column(Text,default="");cancel_requested=Column(Boolean,default=False);before_sha=Column(String(64));after_sha=Column(String(64));retry_of=Column(Integer)
- Index("ix_deployments_project_created", "project_id", "created_at");Index("ix_deployments_status_created", "status", "created_at")
-class Log(Base):
- __tablename__="logs";id=Column(Integer,primary_key=True);deployment_id=Column(Integer,index=True);step_id=Column(Integer,index=True);stream=Column(String(20));message=Column(Text);created_at=Column(DateTime,default=now)
-db_path=Path(settings.database_url.replace("sqlite:///","")).expanduser()
-if not db_path.is_absolute():db_path=Path(__file__).resolve().parent/db_path
-db_path.parent.mkdir(parents=True,exist_ok=True)
-Base.metadata.create_all(engine)
-def configure_sqlite():
- if settings.database_url.startswith("sqlite"):
-  with engine.begin() as c:
-   c.exec_driver_sql("PRAGMA journal_mode=WAL")
-   c.exec_driver_sql("PRAGMA synchronous=NORMAL")
-configure_sqlite()
-def ensure_schema():
- with engine.begin() as c:
-  for table, column, ddl in [("deployments","config_snapshot","TEXT"),("deployments","note","TEXT"),("deployments","cancel_requested","BOOLEAN DEFAULT 0"),("deployments","before_sha","VARCHAR(64)"),("deployments","after_sha","VARCHAR(64)"),("deployments","retry_of","INTEGER"),("logs","step_id","INTEGER")]:
-   cols={x[1] for x in c.exec_driver_sql(f"PRAGMA table_info({table})")}
-   if column not in cols:c.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-ensure_schema()
-FERNET=Fernet(__import__("base64").urlsafe_b64encode(hashlib.sha256(settings.secret_key.encode()).digest()))
+from .config import settings,engine,SessionLocal,Base,now
+from .models import User,Project,Step,Env,Deployment,Log
 def encrypt_secret(value:str)->str:return "enc:"+FERNET.encrypt(value.encode()).decode()
 def decrypt_secret(value:str)->str:
  if not value.startswith("enc:"):return value
