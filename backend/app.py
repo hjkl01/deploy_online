@@ -106,8 +106,8 @@ def check(x):
  if x.shell not in ("bash","zsh") or not shutil.which(x.shell):raise HTTPException(400,f"shell 不可用: {x.shell}")
  home=Path.home().resolve()
  for s in x.steps:
-  if s["cwd"] != "~" and not s["cwd"].startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
-  relative="" if s["cwd"] == "~" else s["cwd"][2:]
+  if s.cwd != "~" and not s.cwd.startswith("~/"):raise HTTPException(400,"cwd 必须从用户家目录 ~ 开始")
+  relative="" if s.cwd == "~" else s.cwd[2:]
   target=(home / relative).resolve()
   if target != home and home not in target.parents:raise HTTPException(400,"cwd 不能越出用户家目录")
  for e in x.environment:
@@ -115,7 +115,7 @@ def check(x):
  for s in x.steps:
   if len(s.name)>200 or len(s.command)>50000:raise HTTPException(400,"步骤名称或命令过长")
 def snapshot_project(p,d):
- return json.dumps({"project":{"name":p.name,"branch":p.branch,"shell":p.shell,"enabled":p.enabled},"steps":[{"id":s.id,"name":s["name"],"type":s["type"],"cwd":s["cwd"],"command":s["command"],"enabled":s["enabled"],"timeout":s["timeout"],"continue_on_error":s["continue_on_error"],"position":s.position} for s in p.steps],"environment":[{"key":e.key,"value":e.value,"is_secret":e.is_secret} for e in p.envs]},ensure_ascii=False)
+ return json.dumps({"project":{"name":p.name,"branch":p.branch,"shell":p.shell,"enabled":p.enabled},"steps":[{"id":s.id,"name":s.name,"type":s.step_type,"cwd":s.cwd,"command":s.command,"enabled":s.enabled,"timeout":s.timeout,"continue_on_error":s.continue_on_error,"position":s.position} for s in p.steps],"environment":[{"key":e.key,"value":e.value,"is_secret":e.is_secret} for e in p.envs]},ensure_ascii=False)
 def po(p):return {"id":p.id,"name":p.name,"description":p.description,"branch":p.branch,"shell":p.shell,"enabled":p.enabled}
 @app.get("/health")
 def health():return {"status":"ok"}
@@ -263,7 +263,7 @@ async def run(i):
      try:
       proc=await asyncio.create_subprocess_exec(*sh(p.shell,cmd),cwd=str(cwd),env=env,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,start_new_session=True)
       async def rd(st,k):
-       while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
+       while line:=await st.readline():await emit(i,k,line.decode(errors="replace"),step_id)
       await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s["timeout"])
       step_code=proc.returncode
       if s["type"]=="git_pull" and step_code==0:
