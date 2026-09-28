@@ -39,16 +39,7 @@ if not d.query(User).first():
  d.add(User(username=settings.admin_username,password_hash=hash_password(settings.admin_password),role="admin"))
  d.commit()
 d.close()
-class Login(BaseModel):username:str;password:str
-class StepIn(BaseModel):
- name:str;step_type:str="command";cwd:str="~";command:str="";enabled:bool=True;timeout:int=Field(3600,ge=1,le=86400);continue_on_error:bool=False
-class EnvIn(BaseModel):key:str;value:str="";is_secret:bool=False
-class ProjectIn(BaseModel):
- name:str;description:str="";branch:str="main";shell:str="bash";enabled:bool=True;steps:list[StepIn]=Field(default_factory=list);environment:list[EnvIn]=Field(default_factory=list)
-class UserIn(BaseModel):
- username:str
- password:str=""
- role:str="viewer"
+from schemas import Login,StepIn,EnvIn,ProjectIn,UserIn
 app=FastAPI(title="deploy_online");
 STATIC_DIR=Path(__file__).resolve().parent/"static"
 if (STATIC_DIR/"_next").is_dir(): app.mount("/_next",StaticFiles(directory=STATIC_DIR/"_next"),name="next")
