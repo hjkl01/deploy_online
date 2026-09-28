@@ -14,7 +14,7 @@ class LogBroker:
         async with self.locks[deployment_id]:
             self.buffers[deployment_id].append((step_id, stream, message))
             if len(self.buffers[deployment_id]) >= self.batch_size:
-                await self.flush(deployment_id, queues)
+                await self.flush(deployment_id)
 
     async def flush(self, deployment_id, queues=None):
         rows = self.buffers.get(deployment_id)
@@ -36,21 +36,10 @@ class LogBroker:
             d.close()
 
         self.buffers[deployment_id].clear()
-        if queues is not None:
-            for index, (step_id, stream, message) in enumerate(rows):
-                payload = {
-                    "type": "log",
-                    "id": ids[index],
-                    "step_id": step_id,
-                    "stream": stream,
-                    "message": message,
-                }
-                for q in list(queues[deployment_id]):
-                    await q.put(payload)
 
     async def finish(self, deployment_id, status, code, queues=None):
         async with self.locks[deployment_id]:
-            await self.flush(deployment_id, queues)
+            await self.flush(deployment_id)
 
         d = SessionLocal()
         try:
@@ -64,9 +53,5 @@ class LogBroker:
         finally:
             d.close()
 
-        if queues is not None:
-            payload = {"type": "status", "status": status, "exit_code": code}
-            for q in list(queues[deployment_id]):
-                await q.put(payload)
 
 broker = LogBroker()
