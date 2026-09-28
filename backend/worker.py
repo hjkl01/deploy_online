@@ -21,26 +21,18 @@ async def worker():
  while True:
   d=SessionLocal()
   job=d.query(Deployment).filter(Deployment.status=="pending").order_by(Deployment.id).first()
-  if job:
-   job.status="running"
-   job.started_at=datetime.now(timezone.utc)
-   d.commit()
-   job_id=job.id
-  else:
-   job_id=None
+  job_id=job.id if job else None
   d.close()
   if job_id is not None:
-   d=SessionLocal()
-   j=d.get(Deployment,job_id)
-   if j:j.status="pending";j.started_at=None;d.commit()
-   d.close()
    try:
     await run(job_id)
    except Exception:
     d=SessionLocal()
     j=d.get(Deployment,job_id)
     if j and j.status in ("pending","running"):
-     j.status="failed";j.exit_code=1;j.finished_at=datetime.now(timezone.utc)
+     j.status="failed"
+     j.exit_code=1
+     j.finished_at=datetime.now(timezone.utc)
      d.commit()
     d.close()
   else:
