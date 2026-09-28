@@ -17,7 +17,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 class Settings(BaseSettings):
  model_config={"env_file":".env","env_file_encoding":"utf-8","extra":"ignore"}
- database_url:str="sqlite:///./data/deploy_online.db";secret_key:str="change-me";admin_username:str="admin";admin_password:str="admin"
+ database_url:str="sqlite:///./data/deploy_online.db";secret_key:str="change-me";admin_username:str="admin";admin_password:str="admin";log_retention_days:int=30
 settings=Settings();Path("data").mkdir(exist_ok=True)
 engine=create_engine(settings.database_url,connect_args={"check_same_thread":False,"timeout":30});SessionLocal=sessionmaker(bind=engine,expire_on_commit=False);Base=declarative_base();now=lambda:datetime.now(timezone.utc)
 class User(Base):
@@ -64,6 +64,10 @@ def verify_password(password:str,password_hash:str):
  try:return bcrypt.checkpw(password.encode(),password_hash.encode())
  except (ValueError,TypeError):return False
 d=SessionLocal()
+cutoff=now().timestamp()-settings.log_retention_days*86400
+for _log in d.query(Log).all():
+ if _log.created_at and _log.created_at.timestamp()<cutoff:d.delete(_log)
+d.commit()
 for _env in d.query(Env).filter_by(is_secret=True).all():
  if _env.value and not _env.value.startswith("enc:"):_env.value=encrypt_secret(_env.value)
 d.commit()
