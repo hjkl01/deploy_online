@@ -28,7 +28,6 @@ class LogBroker:
             ]
             d.add_all(objects)
             d.commit()
-            ids = [x.id for x in objects]
         except Exception:
             d.rollback()
             raise
