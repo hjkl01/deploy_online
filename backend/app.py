@@ -72,6 +72,10 @@ def validate_project(x: ProjectIn):
 
     home = Path.home().resolve()
     for step in x.steps:
+        if step.step_type not in ("command", "git_pull", "restart", "health_check"):
+            raise HTTPException(400, f"步骤类型无效: {step.step_type}")
+        if step.step_type == "health_check" and not step.command.strip().startswith(("http://", "https://")):
+            raise HTTPException(400, "health_check 的命令必须是 http:// 或 https:// URL")
         if step.cwd != "~" and not step.cwd.startswith("~/"):
             raise HTTPException(400, "cwd 必须从用户家目录 ~ 开始")
         relative = "" if step.cwd == "~" else step.cwd[2:]
@@ -372,6 +376,11 @@ def cancel_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("adm
         j.status = "cancelled"
         j.exit_code = 130
         j.finished_at = now()
+        for step in d.query(DeploymentStep).filter_by(deployment_id=did, status="pending").all():
+            step.status = "cancelled"
+            step.finished_at = j.finished_at
+            step.exit_code = 130
+            step.error = "部署取消"
     d.commit()
     return {"ok": True, "status": j.status}
 
