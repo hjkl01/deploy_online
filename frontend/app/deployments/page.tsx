@@ -6,7 +6,7 @@ const API=process.env.NEXT_PUBLIC_API_URL||"";
 const WS=process.env.NEXT_PUBLIC_WS_URL||"";
 
 function time(v:string|null){return v?new Date(v).toLocaleString():"-"}
-function statusName(v:string){return v==="success"?"成功":v==="failed"?"失败":v==="running"?"运行中":v==="pending"?"等待中":v}
+function statusName(v:string){return v==="success"?"成功":v==="failed"?"失败":v==="cancelled"?"已取消":v==="running"?"运行中":v==="pending"?"等待中":v}
 function duration(x:any){
  if(!x.started_at)return "-";
  const end=x.finished_at?new Date(x.finished_at).getTime():Date.now();
@@ -33,7 +33,7 @@ function History(){
  useEffect(()=>{fetch(API+"/api/projects",{credentials:"include"}).then(r=>r.ok?r.json():[]).then(setProjects)},[]);
  useEffect(()=>{load()},[page,projectId,filterStatus]);
  return <main className="wrap"><div className="topbar"><h1>部署记录</h1><div><a href="/">首页</a><a href="/projects">项目管理</a></div></div>
-  <div className="card filters"><select value={projectId} onChange={e=>{setProjectId(e.target.value);setPage(1)}}><option value="">全部项目</option>{projects.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><select value={filterStatus} onChange={e=>{setFilterStatus(e.target.value);setPage(1)}}><option value="">全部状态</option><option value="pending">等待中</option><option value="running">运行中</option><option value="success">成功</option><option value="failed">失败</option></select></div>
+  <div className="card filters"><select value={projectId} onChange={e=>{setProjectId(e.target.value);setPage(1)}}><option value="">全部项目</option>{projects.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><select value={filterStatus} onChange={e=>{setFilterStatus(e.target.value);setPage(1)}}><option value="">全部状态</option><option value="pending">等待中</option><option value="running">运行中</option><option value="success">成功</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></div>
   {loading&&<div className="card">加载中...</div>}
   {!loading&&rows.length===0&&<div className="card">暂无符合条件的部署记录。</div>}
   {rows.map(x=><div className="card" key={x.id}><div className="row"><div><h2>{x.project_name} <span className={"status "+x.status}>{statusName(x.status)}</span></h2><p>部署 #{x.id} · 操作人：{x.username}</p><p>开始：{time(x.started_at||x.created_at)} · 结束：{time(x.finished_at)} · 耗时：{duration(x)}</p>{x.exit_code!==null&&<p>退出码：{x.exit_code}</p>}</div><div><a className="button-link" href={"/deployments?id="+x.id}>查看日志</a></div></div></div>)}
