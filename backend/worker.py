@@ -1,6 +1,8 @@
 import asyncio
 from datetime import datetime, timezone
-from app import SessionLocal, Deployment, run, ensure_schema
+from config import SessionLocal
+from models import Deployment
+from app import run, ensure_schema
 
 POLL_SECONDS=1.0
 
