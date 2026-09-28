@@ -212,6 +212,13 @@ async def finish(i,status,code):
  j.status=status;j.exit_code=code;j.finished_at=now();d.commit();d.close()
  for q in list(queues[i]):await q.put({"type":"status","status":status,"exit_code":code})
 def sh(shell,cmd):return ["/bin/bash","-lic",cmd] if shell=="bash" else ["/bin/zsh","-lic",cmd]
+async def git_sha(cwd):
+ try:
+  p=await asyncio.create_subprocess_exec("git","rev-parse","HEAD",cwd=str(cwd),stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
+  out,_=await p.communicate()
+  return out.decode().strip() if p.returncode==0 else None
+ except Exception:return None
+
 def kill_process_group(proc):
  if not proc or proc.returncode is not None:return
  try:
@@ -245,6 +252,10 @@ async def run(i):
     cwd=Path(s["cwd"]).expanduser().resolve();cmd=("git checkout "+shlex.quote(project_cfg["branch"])+" && git pull --ff-only") if s["type"]=="git_pull" else s["command"]
     step_id=s.get("id")
     step_failed=False;step_code=0
+    if s["type"]=="git_pull":
+     before=await git_sha(cwd)
+     if before:
+      d=SessionLocal();j=d.get(Deployment,i);j.before_sha=before;d.commit();d.close()
     if not cwd.is_dir():
      await emit(i,"stderr",f"[{s['name']}] cwd 不存在: {cwd}\n",step_id);step_failed=True;step_code=1
     elif cmd.strip():
@@ -255,6 +266,10 @@ async def run(i):
        while line:=await st.readline():await emit(i,k,line.decode(errors="replace"))
       await asyncio.wait_for(asyncio.gather(rd(proc.stdout,"stdout"),rd(proc.stderr,"stderr"),proc.wait()),s["timeout"])
       step_code=proc.returncode
+      if s["type"]=="git_pull" and step_code==0:
+       after=await git_sha(cwd)
+       if after:
+        d=SessionLocal();j=d.get(Deployment,i);j.after_sha=after;d.commit();d.close()
      except asyncio.TimeoutError:
       if proc:
        kill_process_group(proc)
