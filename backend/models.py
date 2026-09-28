@@ -1,5 +1,4 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, Boolean
-from sqlalchemy.orm import relationship
 from config import Base, now
 
 class User(Base):
@@ -17,8 +16,6 @@ class Project(Base):
     branch = Column(String(255), default="main")
     shell = Column(String(20), default="bash")
     enabled = Column(Boolean, default=True)
-    steps = relationship("Step", cascade="all,delete-orphan", order_by="Step.position")
-    envs = relationship("Env", cascade="all,delete-orphan")
 
 class Step(Base):
     __tablename__ = "steps"
@@ -57,9 +54,23 @@ class Deployment(Base):
     before_sha = Column(String(64))
     after_sha = Column(String(64))
     retry_of = Column(Integer)
-
     Index("ix_deployments_project_created", "project_id", "created_at")
     Index("ix_deployments_status_created", "status", "created_at")
+
+class DeploymentStep(Base):
+    __tablename__ = "deployment_steps"
+    id = Column(Integer, primary_key=True)
+    deployment_id = Column(ForeignKey("deployments.id"), index=True)
+    source_step_id = Column(Integer, index=True)
+    position = Column(Integer, default=0)
+    name = Column(String(200))
+    status = Column(String(30), default="pending", index=True)
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    exit_code = Column(Integer)
+    duration_ms = Column(Integer)
+    error = Column(Text, default="")
+    Index("ix_deployment_steps_deployment_position", "deployment_id", "position")
 
 class Log(Base):
     __tablename__ = "logs"
