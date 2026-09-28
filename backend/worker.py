@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from config import SessionLocal, settings
 from database import ensure_schema
 from models import Deployment, DeploymentStep
+from sqlalchemy import update
 from services.deployment import run
 
 POLL_SECONDS = 1.0
@@ -58,11 +59,21 @@ async def worker():
                 )
                 candidates = []
                 for job in pending:
-                    if job.project_id not in active:
-                        candidates.append((job.id, job.project_id))
-                        active.add(job.project_id)
+                    if job.project_id in active:
+                        continue
+                    result = d.execute(
+                        update(Deployment)
+                        .where(Deployment.id == job.id, Deployment.status == "pending")
+                        .values(status="running", started_at=__import__("config").now())
+                    )
+                    if result.rowcount != 1:
+                        continue
+                    candidates.append((job.id, job.project_id))
+                    active.add(job.project_id)
                     if len(candidates) >= capacity:
                         break
+                if candidates:
+                    d.commit()
             finally:
                 d.close()
 
