@@ -197,6 +197,12 @@ async def run(deployment_id):
                     job = d.get(Deployment, deployment_id)
                     if not job or job.cancel_requested:
                         cancelled[0] = True
+                        for pending_step in d.query(DeploymentStep).filter_by(deployment_id=deployment_id, status="pending").all():
+                            pending_step.status = "cancelled"
+                            pending_step.finished_at = now()
+                            pending_step.exit_code = 130
+                            pending_step.error = "部署取消"
+                        d.commit()
                         break
                 finally:
                     d.close()
