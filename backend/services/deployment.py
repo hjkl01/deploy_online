@@ -162,11 +162,8 @@ async def run(deployment_id):
         d = SessionLocal()
         try:
             job = d.get(Deployment, deployment_id)
-            if not job or job.status != "pending":
+            if not job or job.status != "running":
                 return
-            job.status = "running"
-            job.started_at = now()
-            d.commit()
             env_values = list(json.loads(snapshot)["environment"])
         finally:
             d.close()
