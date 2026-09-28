@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import shlex
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from collections import defaultdict
 from pathlib import Path
 
@@ -13,6 +15,18 @@ from .logging import broker
 from runtime import queues
 
 project_locks = defaultdict(asyncio.Lock)
+
+ALLOWED_STEP_TYPES = {"command", "git_pull", "restart", "health_check"}
+
+def _health_check(url, timeout):
+    request = Request(url, method="GET", headers={"User-Agent": "deploy_online-health-check"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.status, response.reason or ""
+    except HTTPError as exc:
+        return exc.code, exc.reason or ""
+    except URLError as exc:
+        raise RuntimeError(f"health check 请求失败: {exc.reason}") from exc
 
 def snapshot_project(project):
     return json.dumps({
@@ -44,9 +58,25 @@ def snapshot_project(project):
 
 async def _execute_step(deployment_id, project_cfg, env, step, cancelled):
     cwd = Path(step["cwd"]).expanduser().resolve()
+    step_type = step["type"]
+    if step_type not in ALLOWED_STEP_TYPES:
+        await broker.emit(deployment_id, "stderr", f'[{step["name"]}] 未知步骤类型: {step_type}\\n', step_id, queues)
+        return 1, False, None
+    if step_type == "health_check":
+        url = step["command"].strip()
+        if not url.startswith(("http://", "https://")):
+            await broker.emit(deployment_id, "stderr", f'[{step["name"]}] health_check URL 无效: {url}\\n', step_id, queues)
+            return 1, False, None
+        try:
+            status, reason = await asyncio.to_thread(_health_check, url, max(1, int(step.get("timeout") or 30)))
+            await broker.emit(deployment_id, "system", f'[{step["name"]}] HTTP {status} {reason}\\n', step_id, queues)
+            return (0 if 200 <= status < 300 else status), False, None
+        except Exception as exc:
+            await broker.emit(deployment_id, "stderr", f'[{step["name"]}] {exc}\\n', step_id, queues)
+            return 1, False, None
     command = (
         "git checkout " + shlex.quote(project_cfg["branch"]) + " && git pull --ff-only"
-        if step["type"] == "git_pull" else step["command"]
+        if step_type == "git_pull" else step["command"]
     )
     step_id = step.get("id")
 
@@ -180,7 +210,6 @@ async def run(deployment_id):
                     step_row.status = "running"
                     step_row.started_at = now()
                     d.commit()
-                finally_d = d
                 d.close()
 
                 if step["type"] == "git_pull":
