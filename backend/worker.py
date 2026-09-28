@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from config import SessionLocal, settings
+from config import SessionLocal, now, settings
 from database import ensure_schema
 from models import Deployment, DeploymentStep
 from sqlalchemy import update
@@ -64,7 +64,7 @@ async def worker():
                     result = d.execute(
                         update(Deployment)
                         .where(Deployment.id == job.id, Deployment.status == "pending")
-                        .values(status="running", started_at=__import__("config").now())
+                        .values(status="running", started_at=now())
                     )
                     if result.rowcount != 1:
                         continue
