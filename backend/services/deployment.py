@@ -57,6 +57,7 @@ def snapshot_project(project):
     }, ensure_ascii=False)
 
 async def _execute_step(deployment_id, project_cfg, env, step, cancelled):
+    step_id = step.get("id")
     cwd = Path(step["cwd"]).expanduser().resolve()
     step_type = step["type"]
     if step_type not in ALLOWED_STEP_TYPES:
@@ -78,8 +79,6 @@ async def _execute_step(deployment_id, project_cfg, env, step, cancelled):
         "git checkout " + shlex.quote(project_cfg["branch"]) + " && git pull --ff-only"
         if step_type == "git_pull" else step["command"]
     )
-    step_id = step.get("id")
-
     if not cwd.is_dir():
         await broker.emit(deployment_id, "stderr", f'[{step["name"]}] cwd 不存在: {cwd}\n', step_id, queues)
         return 1, False, None
