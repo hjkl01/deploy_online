@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from config import SessionLocal, settings
 from database import ensure_schema
-from models import Deployment
+from models import Deployment, DeploymentStep
 from services.deployment import run
 
 POLL_SECONDS = 1.0
@@ -18,6 +18,11 @@ def recover_stale():
             job.exit_code = 125
             job.finished_at = datetime.now(timezone.utc)
             job.note = (job.note or "") + "\nWorker 重启，原部署任务未完成，已标记为失败。"
+            for step in d.query(DeploymentStep).filter_by(deployment_id=job.id, status="running").all():
+                step.status = "failed"
+                step.exit_code = 125
+                step.finished_at = job.finished_at
+                step.error = "Worker 重启，任务中断"
         d.commit()
     finally:
         d.close()
