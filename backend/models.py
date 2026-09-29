@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, Boolean
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from config import Base, now
 
@@ -23,6 +23,9 @@ class Project(Base):
 
 class ProjectMember(Base):
     __tablename__ = "project_members"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_members_project_user"),
+    )
     id = Column(Integer, primary_key=True)
     project_id = Column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
