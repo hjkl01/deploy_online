@@ -40,6 +40,11 @@ def cancel_pending_steps(deployment_id):
                 error="部署取消",
             )
         )
+        d.execute(
+            update(Deployment)
+            .where(Deployment.id == deployment_id)
+            .values(state_version=Deployment.state_version + 1)
+        )
         d.commit()
     except Exception:
         d.rollback()
@@ -61,6 +66,11 @@ def mark_step_running(deployment_id, source_step_id):
                 status="running",
                 started_at=now(),
             )
+        )
+        d.execute(
+            update(Deployment)
+            .where(Deployment.id == deployment_id)
+            .values(state_version=Deployment.state_version + 1)
         )
         d.commit()
     except Exception:
@@ -100,6 +110,11 @@ def mark_step_finished(deployment_id, source_step_id, code, cancelled=False):
                 DeploymentStep.source_step_id == source_step_id,
             )
             .values(**values)
+        )
+        d.execute(
+            update(Deployment)
+            .where(Deployment.id == deployment_id)
+            .values(state_version=Deployment.state_version + 1)
         )
         d.commit()
     except Exception:
