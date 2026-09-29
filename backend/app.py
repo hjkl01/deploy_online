@@ -91,20 +91,6 @@ async def ws(w: WebSocket, did: int):
             for s in steps
         ]
 
-    def step_fingerprint(steps):
-        return tuple(
-            (
-                s.id,
-                s.status,
-                s.started_at,
-                s.finished_at,
-                s.exit_code,
-                s.duration_ms,
-                s.error,
-            )
-            for s in steps
-        )
-
     await w.accept()
     try:
         last_state_version = job.state_version
