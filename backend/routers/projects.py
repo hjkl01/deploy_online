@@ -9,6 +9,7 @@ from dependencies import dbdep, role
 from models import Deployment, Env, Project, Step
 from schemas import ProjectIn
 from security import encrypt_secret
+from services.repository import get_project, project_has_deployments, replace_project_children
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -50,17 +51,16 @@ def project_out(p):
 def save_project(x, p, d):
     p.name, p.description, p.branch, p.shell, p.enabled = x.name, x.description, x.branch, x.shell, x.enabled
     existing_secret = {e.key: e.value for e in d.query(Env).filter_by(project_id=p.id, is_secret=True).all()}
-    d.query(Step).filter_by(project_id=p.id).delete()
-    d.query(Env).filter_by(project_id=p.id).delete()
-    for i, step in enumerate(x.steps):
-        d.add(Step(project_id=p.id, position=i, **step.model_dump()))
+    steps_data = [step.model_dump() for step in x.steps]
+    env_data = []
     for env in x.environment:
         data = env.model_dump()
         if data["is_secret"] and data["value"] == "" and data["key"] in existing_secret:
             data["value"] = existing_secret[data["key"]]
         if data["is_secret"] and data["value"] and not data["value"].startswith("enc:"):
             data["value"] = encrypt_secret(data["value"])
-        d.add(Env(project_id=p.id, **data))
+        env_data.append(data)
+    replace_project_children(d, p, steps_data, env_data)
 
 
 @router.get("")
@@ -70,7 +70,7 @@ def projects(d: Session = Depends(dbdep), u=Depends(role("admin", "operator", "v
 
 @router.get("/{pid}")
 def project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "operator", "viewer"))):
-    p = d.get(Project, pid)
+    p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
     x = project_out(p)
@@ -107,7 +107,7 @@ def delete_project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin"
     p = d.get(Project, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
-    if d.query(Deployment).filter_by(project_id=pid).first():
+    if project_has_deployments(d, pid):
         raise HTTPException(409, "项目已有部署记录，不能删除；如需保留历史记录，请先禁用项目")
     try:
         d.delete(p)
