@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from dependencies import dbdep, role
-from models import Deployment, Env, Project, ProjectMember, User
+from models import Env, Project, ProjectMember, User
 from schemas import ProjectIn
 from security import encrypt_secret
 from services.permissions import require_project_view_access
