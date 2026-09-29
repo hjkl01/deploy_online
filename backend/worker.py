@@ -1,89 +1,48 @@
 import asyncio
-from datetime import datetime, timezone
+import logging
 
-from config import SessionLocal, now, settings
+from config import settings
 from database import ensure_schema
-from models import Deployment, DeploymentStep
-from sqlalchemy import update
 from services.deployment import run
+from services.worker_state import claim_pending, recover_stale
 
 POLL_SECONDS = 1.0
+ACTIVE_POLL_SECONDS = 0.2
 MAX_CONCURRENCY = max(1, settings.worker_concurrency)
 
-def recover_stale():
-    d = SessionLocal()
-    try:
-        rows = d.query(Deployment).filter(Deployment.status == "running").all()
-        for job in rows:
-            job.status = "failed"
-            job.exit_code = 125
-            job.finished_at = datetime.now(timezone.utc)
-            job.note = (job.note or "") + "\nWorker 重启，原部署任务未完成，已标记为失败。"
-            for step in d.query(DeploymentStep).filter_by(deployment_id=job.id, status="running").all():
-                step.status = "failed"
-                step.exit_code = 125
-                step.finished_at = job.finished_at
-                step.error = "Worker 重启，任务中断"
-        d.commit()
-    finally:
-        d.close()
+logger = logging.getLogger(__name__)
+
 
 async def worker():
     ensure_schema()
     recover_stale()
+
     active = set()
     tasks = {}
 
     async def reap_done():
         for project_id, task in list(tasks.items()):
-            if task.done():
-                active.discard(project_id)
-                tasks.pop(project_id, None)
-                try:
-                    task.result()
-                except Exception:
-                    pass
+            if not task.done():
+                continue
+
+            active.discard(project_id)
+            tasks.pop(project_id, None)
+            try:
+                task.result()
+            except Exception:
+                logger.exception("部署任务异常退出: project_id=%s", project_id)
 
     while True:
         await reap_done()
+
         capacity = MAX_CONCURRENCY - len(tasks)
         if capacity > 0:
-            d = SessionLocal()
-            try:
-                pending = (
-                    d.query(Deployment)
-                    .filter(Deployment.status == "pending")
-                    .order_by(Deployment.id)
-                    .limit(MAX_CONCURRENCY * 2)
-                    .all()
-                )
-                candidates = []
-                for job in pending:
-                    if job.project_id in active:
-                        continue
-                    result = d.execute(
-                        update(Deployment)
-                        .where(Deployment.id == job.id, Deployment.status == "pending")
-                        .values(status="running", started_at=now())
-                    )
-                    if result.rowcount != 1:
-                        continue
-                    candidates.append((job.id, job.project_id))
-                    active.add(job.project_id)
-                    if len(candidates) >= capacity:
-                        break
-                if candidates:
-                    d.commit()
-            finally:
-                d.close()
-
+            candidates = claim_pending(active, capacity)
             for job_id, project_id in candidates:
                 tasks[project_id] = asyncio.create_task(run(job_id))
 
-        if not tasks:
-            await asyncio.sleep(POLL_SECONDS)
-        else:
-            await asyncio.sleep(0.2)
+        await asyncio.sleep(ACTIVE_POLL_SECONDS if tasks else POLL_SECONDS)
+
 
 if __name__ == "__main__":
     asyncio.run(worker())
