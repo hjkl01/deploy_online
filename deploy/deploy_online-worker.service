@@ -1,6 +1,6 @@
 [Unit]
 Description=deploy_online deployment worker
-After=network.target
+After=network.target deploy_online.service
 
 [Service]
 Type=simple
