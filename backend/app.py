@@ -10,11 +10,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from config import SessionLocal, settings
 from database import init_database
 from http_handlers import install_http_handlers
-from models import Deployment, DeploymentStep, Log
+from models import Deployment, DeploymentStep, Log, User
 from routers.auth import router as auth_router
 from routers.deployments import router as deployment_router
 from routers.projects import router as project_router
 from routers.users import router as user_router
+from services.permissions import require_project_view_access
 
 init_database()
 
@@ -59,6 +60,8 @@ async def ws(w: WebSocket, did: int):
 
     d = SessionLocal()
     try:
+        user_id = w.scope.get("session", {}).get("user_id")
+        current_user = d.get(User, user_id) if user_id else None
         job = d.get(Deployment, did)
         rows = d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all()
         initial_steps = (
@@ -71,6 +74,9 @@ async def ws(w: WebSocket, did: int):
         d.close()
 
     if not job:
+        await w.close(code=1008)
+        return
+    if not current_user or (current_user.role == "operator" and not d.query(__import__("models").ProjectMember.id).filter_by(project_id=job.project_id, user_id=current_user.id).first()):
         await w.close(code=1008)
         return
 
