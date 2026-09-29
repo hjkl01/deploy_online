@@ -6,7 +6,7 @@ from alembic.config import Config
 from sqlalchemy import inspect
 
 from config import SessionLocal, engine, settings
-from models import User, Env, Log
+from models import User, Env, Log, Project, ProjectMember
 from security import encrypt_secret, hash_password
 
 BASE_TABLES = {"users", "projects", "project_members", "steps", "envs", "deployments", "deployment_steps", "logs"}
@@ -78,6 +78,14 @@ def init_database():
                 password_hash=hash_password(settings.admin_password),
                 role="admin",
             ))
+            d.flush()
+        operators = d.query(User).filter_by(role="operator").all()
+        projects = d.query(Project).all()
+        existing_pairs = {(x.project_id, x.user_id) for x in d.query(ProjectMember).all()}
+        for project in projects:
+            for operator in operators:
+                if (project.id, operator.id) not in existing_pairs:
+                    d.add(ProjectMember(project_id=project.id, user_id=operator.id))
         d.commit()
     finally:
         d.close()
