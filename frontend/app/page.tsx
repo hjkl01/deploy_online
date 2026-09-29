@@ -1,40 +1,17 @@
 "use client";
-
-import{useEffect,useState}from"react";
-import{useRouter}from"next/navigation";
-
+import{useEffect,useState}from"react";import{useRouter}from"next/navigation";
 const API=process.env.NEXT_PUBLIC_API_URL||"";
-
-export default function Home(){
- const[p,setP]=useState<any[]>([]),[me,setMe]=useState<any>(null),[login,setLogin]=useState(false);
- const r=useRouter();
- const load=()=>Promise.all([fetch(API+"/api/projects",{credentials:"include"}),fetch(API+"/api/auth/me",{credentials:"include"})]).then(async([a,b])=>{
-   if(a.status===401){setLogin(true);return}
-   setP(await a.json());if(b.ok)setMe(await b.json())
- }).catch(()=>setLogin(true));
- useEffect(()=>{load()},[]);
- if(login)return <Login onLogin={()=>{setLogin(false);load()}}/>;
- return <main className="wrap">
-   <div className="topbar">
-    <div className="brand"><div className="brand-mark">D</div><div><div className="brand-title">Deploy Online</div><p>{me?"你好，"+me.username+" · "+roleName(me.role):"部署管理平台"}</p></div></div>
-    <div><a href="/projects">项目</a><a href="/deployments">部署记录</a>{me?.role==="admin"&&<a href="/users">用户</a>}<button className="secondary" onClick={async()=>{await fetch(API+"/api/auth/logout",{method:"POST",credentials:"include"});setLogin(true)}}>退出</button></div>
-   </div>
-   <div className="section-title"><div><h2>项目概览</h2><span className="badge">{p.length} 个项目</span></div>{me?.role==="admin"&&<button onClick={()=>r.push("/projects/edit")}>+ 添加项目</button>}</div>
-   <div className="grid">{p.map(x=><Project key={x.id} p={x} router={r} canDeploy={me?.role==="admin"||me?.role==="operator"}/>)}</div>
-   {p.length===0&&<div className="card empty"><h3>还没有项目</h3><p>创建第一个项目配置，就可以开始一键部署。</p>{me?.role==="admin"&&<button onClick={()=>r.push("/projects/edit")}>创建项目</button>}</div>}
- </main>
-}
-
 function roleName(x:string){return x==="admin"?"管理员":x==="operator"?"操作员":"查看者"}
-
-function Login({onLogin}:{onLogin:()=>void}){
- const[u,su]=useState("admin"),[pw,sp]=useState(""),[err,se]=useState("");
- return <main className="login-shell">
-   <section className="login-visual"><div className="brand"><div className="brand-mark">D</div><div className="brand-title">Deploy Online</div></div><h1>让部署变得简单、清晰、可控。</h1><p>集中管理项目配置、执行部署流程，并实时查看部署日志。</p><div className="login-points"><div>✓ 多项目、多步骤部署</div><div>✓ 实时部署状态与日志</div><div>✓ 基于角色的访问控制</div></div></section>
-   <section className="login-panel"><div className="login-card"><div className="brand"><div className="brand-mark">D</div><div className="brand-title">Deploy Online</div></div><h2 style={{marginTop:24}}>欢迎回来</h2><p className="muted">登录你的部署控制台</p><label>用户名</label><input placeholder="请输入用户名" value={u} onChange={e=>su(e.target.value)}/><label>密码</label><input placeholder="请输入密码" type="password" value={pw} onChange={e=>sp(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")document.getElementById("login-btn")?.click()}}/><button id="login-btn" onClick={async()=>{const r=await fetch(API+"/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"include",body:JSON.stringify({username:u,password:pw})});if(r.ok)onLogin();else se("用户名或密码错误")}}>登录</button>{err&&<p className="error">{err}</p>}</div></section>
- </main>
-}
-
-function Project({p,router,canDeploy}:{p:any,router:any,canDeploy:boolean}){
- return <div className="card project-card"><div className="project-icon">{p.name?.slice(0,1).toUpperCase()||"P"}</div><h2>{p.name}</h2><p>{p.description||"暂无项目说明"}</p><div className="project-meta"><span className={p.enabled?"badge enabled":"badge disabled"}>{p.enabled?"已启用":"已禁用"}</span><span className="badge">{p.shell}</span><span className="badge">{p.branch}</span></div><div className="project-actions">{canDeploy&&<button disabled={!p.enabled} onClick={async()=>{const x=await fetch(API+"/api/projects/"+p.id+"/deploy",{method:"POST",credentials:"include"});if(!x.ok){alert((await x.json()).detail);return}const d=await x.json();router.push("/deployments?id="+d.id)}}>{p.enabled?"立即部署":"项目已禁用"}</button>}</div></div>
-}
+function statusName(x:string){return x==="success"?"成功":x==="failed"?"失败":x==="running"?"运行中":x==="pending"?"等待中":x==="cancelled"?"已取消":x||"-"}
+function time(v:string|null){return v?new Date(v).toLocaleString():"-"}
+export default function Home(){const[p,setP]=useState<any[]>([]),[me,setMe]=useState<any>(null),[recent,setRecent]=useState<any[]>([]),[login,setLogin]=useState(false),[loading,setLoading]=useState(true);const r=useRouter();const load=()=>{setLoading(true);Promise.all([fetch(API+"/api/projects",{credentials:"include"}),fetch(API+"/api/auth/me",{credentials:"include"}),fetch(API+"/api/deployments?page=1&page_size=8",{credentials:"include"})]).then(async([a,b,c])=>{if(a.status===401){setLogin(true);return}setP(await a.json());if(b.ok)setMe(await b.json());if(c.ok){const x=await c.json();setRecent(x.items||[])}}).catch(()=>setLogin(true)).finally(()=>setLoading(false))};useEffect(()=>{load()},[]);
+if(login)return <Login onLogin={()=>{setLogin(false);load()}}/>;const enabled=p.filter(x=>x.enabled).length,running=recent.filter(x=>x.status==="running"||x.status==="pending").length,success=recent.filter(x=>x.status==="success").length,failed=recent.filter(x=>x.status==="failed").length;
+return <main className="wrap"><div className="topbar"><div className="brand"><div className="brand-mark">D</div><div><div className="brand-title">Deploy Online</div><p>部署控制台 · {me?"你好，"+me.username+" · "+roleName(me.role):"加载中..."}</p></div></div><div><a href="/projects">项目</a><a href="/deployments">部署记录</a>{me?.role==="admin"&&<a href="/users">用户</a>}<button className="secondary" onClick={async()=>{await fetch(API+"/api/auth/logout",{method:"POST",credentials:"include"});setLogin(true)}}>退出</button></div></div>
+<div className="dashboard-hero"><div><span className="hero-kicker">DEPLOYMENT CONSOLE</span><h1>部署控制台</h1><p>集中管理项目、执行部署并实时掌握运行状态。</p></div>{me?.role==="admin"&&<button onClick={()=>r.push("/projects/edit")}>＋ 创建项目</button>}</div>
+<div className="stats-grid"><Stat label="项目总数" value={p.length} detail={enabled+" 个已启用"} icon="P"/><Stat label="最近部署" value={recent.length} detail="最近 8 条记录" icon="D"/><Stat label="执行中" value={running} detail={running?"有部署正在执行":"当前没有运行中的部署"} icon="R"/><Stat label="最近成功" value={success} detail={failed?failed+" 次失败":"暂无失败记录"} icon="✓"/></div>
+<div className="dashboard-grid"><section><div className="section-title"><div><h2>项目状态</h2><span className="badge">{p.length} 个项目</span></div><a className="button-link" href="/projects">查看全部</a></div>{loading?<div className="card">加载中...</div>:p.length===0?<div className="card empty"><h3>还没有项目</h3><p>创建第一个项目配置，就可以开始一键部署。</p>{me?.role==="admin"&&<button onClick={()=>r.push("/projects/edit")}>创建项目</button>}</div>:<div className="dashboard-projects">{p.slice(0,6).map(x=><Project key={x.id} p={x} router={r} canDeploy={me?.role==="admin"||me?.role==="operator"}/>)}</div>}</section>
+<section><div className="section-title"><div><h2>最近部署</h2><span className="badge">{recent.length} 条</span></div><a className="button-link" href="/deployments">全部记录</a></div><div className="timeline card">{recent.length===0?<div className="empty"><h3>暂无部署记录</h3><p>项目首次部署后，记录会显示在这里。</p></div>:recent.map(x=><a className="timeline-item" key={x.id} href={"/deployments?id="+x.id}><span className={"timeline-dot "+x.status}></span><div><div className="timeline-main"><strong>{x.project_name||"项目 #"+x.project_id}</strong><span className={"status "+x.status}>{statusName(x.status)}</span></div><p>#{x.id} · {x.username||"未知用户"} · {time(x.started_at||x.created_at)}</p></div><span className="timeline-arrow">›</span></a>)}</div></section></div>
+</main>}
+function Stat({label,value,detail,icon}:{label:string,value:number,detail:string,icon:string}){return <div className="stat-card"><div className="stat-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div></div>}
+function Login({onLogin}:{onLogin:()=>void}){const[u,su]=useState("admin"),[pw,sp]=useState(""),[err,se]=useState("");return <main className="login-shell"><section className="login-visual"><div className="brand"><div className="brand-mark">D</div><div className="brand-title">Deploy Online</div></div><h1>让部署变得简单、清晰、可控。</h1><p>集中管理项目配置、执行部署流程，并实时查看部署日志。</p><div className="login-points"><div>✓ 多项目、多步骤部署</div><div>✓ 实时部署状态与日志</div><div>✓ 基于角色的访问控制</div></div></section><section className="login-panel"><div className="login-card"><div className="brand"><div className="brand-mark">D</div><div className="brand-title">Deploy Online</div></div><h2 style={{marginTop:24}}>欢迎回来</h2><p className="muted">登录你的部署控制台</p><label>用户名</label><input placeholder="请输入用户名" value={u} onChange={e=>su(e.target.value)}/><label>密码</label><input placeholder="请输入密码" type="password" value={pw} onChange={e=>sp(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")document.getElementById("login-btn")?.click()}}/><button id="login-btn" onClick={async()=>{const r=await fetch(API+"/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"include",body:JSON.stringify({username:u,password:pw})});if(r.ok)onLogin();else se("用户名或密码错误")}}>登录</button>{err&&<p className="error">{err}</p>}</div></section></main>}
+function Project({p,router,canDeploy}:{p:any,router:any,canDeploy:boolean}){return <div className="card project-card"><div className="project-icon">{p.name?.slice(0,1).toUpperCase()||"P"}</div><div className="project-card-head"><div><h2>{p.name}</h2><p>{p.description||"暂无项目说明"}</p></div><span className={p.enabled?"badge enabled":"badge disabled"}>{p.enabled?"已启用":"已禁用"}</span></div><div className="project-meta"><span className="badge">{p.shell}</span><span className="badge">{p.branch}</span></div><div className="project-actions">{canDeploy&&<button disabled={!p.enabled} onClick={async()=>{const x=await fetch(API+"/api/projects/"+p.id+"/deploy",{method:"POST",credentials:"include"});if(!x.ok){alert((await x.json()).detail);return}const d=await x.json();router.push("/deployments?id="+d.id)}}>{p.enabled?"立即部署":"项目已禁用"}</button>}</div></div>}
