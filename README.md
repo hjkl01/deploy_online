@@ -13,6 +13,7 @@ Linux 主机部署管理平台。项目直接运行在宿主机普通 Linux 用�
 - 实时日志、部署历史、取消、重试
 - Secret 环境变量使用应用密钥加密存储
 - SQLite + WAL，适合单机部署
+- Alembic 管理数据库结构，启动时自动执行 Migration
 - API 与部署 Worker 分离，API 重启不会丢失 pending 部署
 - 用户角色：admin / operator / viewer
 
@@ -33,6 +34,8 @@ cp backend/.env.example backend/.env
 ### 2. 安装依赖
 cd backend
 uv sync
+
+数据库 Migration 会在 API 和 Worker 启动时自动执行。新数据库会从 `0001_initial` 创建；已经由旧版本 `create_all()` 创建的完整数据库会自动标记为当前 Migration 基线，后续结构变更通过新的 Alembic revision 执行。
 
 ### 3. 启动 API
 systemctl --user enable --now deploy_online.service
@@ -65,6 +68,7 @@ SQLite 使用 WAL 模式和连接超时，降低 API 与 Worker 同时访问数�
 ## 开发
 后端：cd backend && uv run uvicorn app:app --reload
 Worker：cd backend && uv run python worker.py
+数据库迁移：cd backend && uv run alembic upgrade head
 测试：cd backend && uv run pytest
 前端：cd frontend && npm install && npm run dev
 生产环境建议使用 systemd 管理 API 和 Worker，不建议让 uvicorn 进程直接承担部署任务。
