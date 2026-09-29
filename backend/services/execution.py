@@ -22,31 +22,31 @@ def _health_check(url, timeout):
         raise RuntimeError(f"health check 请求失败: {exc.reason}") from exc
 
 
-async def execute_step(deployment_id, project_cfg, env, step, cancelled, cancel_checker):
+async def execute_step(deployment_id, project_cfg, env, step, cancel_checker):
     step_id = step.get("id")
     name = step["name"]
     step_type = step["type"]
     cwd = Path(step["cwd"]).expanduser().resolve()
 
     if step_type not in ALLOWED_STEP_TYPES:
-        await broker.emit(deployment_id, "stderr", f"[{name}] 未知步骤类型: {step_type}\\n", step_id, queues)
+        await broker.emit(deployment_id, "stderr", f"[{name}] 未知步骤类型: {step_type}\n", step_id, queues)
         return 1, False, None
 
     if step_type == "health_check":
         url = step["command"].strip()
         if not url.startswith(("http://", "https://")):
-            await broker.emit(deployment_id, "stderr", f"[{name}] health_check URL 无效: {url}\\n", step_id, queues)
+            await broker.emit(deployment_id, "stderr", f"[{name}] health_check URL 无效: {url}\n", step_id, queues)
             return 1, False, None
         try:
             status, reason = await asyncio.to_thread(
                 _health_check, url, max(1, int(step.get("timeout") or 30))
             )
             await broker.emit(
-                deployment_id, "system", f"[{name}] HTTP {status} {reason}\\n", step_id, queues
+                deployment_id, "system", f"[{name}] HTTP {status} {reason}\n", step_id, queues
             )
             return (0 if 200 <= status < 300 else status), False, None
         except Exception as exc:
-            await broker.emit(deployment_id, "stderr", f"[{name}] {exc}\\n", step_id, queues)
+            await broker.emit(deployment_id, "stderr", f"[{name}] {exc}\n", step_id, queues)
             return 1, False, None
 
     command = (
@@ -56,15 +56,15 @@ async def execute_step(deployment_id, project_cfg, env, step, cancelled, cancel_
     )
 
     if not cwd.is_dir():
-        await broker.emit(deployment_id, "stderr", f"[{name}] cwd 不存在: {cwd}\\n", step_id, queues)
+        await broker.emit(deployment_id, "stderr", f"[{name}] cwd 不存在: {cwd}\n", step_id, queues)
         return 1, False, None
 
     if not command.strip():
-        await broker.emit(deployment_id, "system", f"[{name}] 无命令，跳过\\n", step_id, queues)
+        await broker.emit(deployment_id, "system", f"[{name}] 无命令，跳过\n", step_id, queues)
         return 0, False, None
 
     await broker.emit(
-        deployment_id, "system", f"\\n>>> {name}\\n$ {command}\\n", step_id, queues
+        deployment_id, "system", f"\n>>> {name}\n$ {command}\n", step_id, queues
     )
     proc = await asyncio.create_subprocess_exec(
         *shell_command(project_cfg["shell"], command),
@@ -106,13 +106,13 @@ async def execute_step(deployment_id, project_cfg, env, step, cancelled, cancel_
         await proc.wait()
         code = 124
         was_cancelled = False
-        await broker.emit(deployment_id, "stderr", f"[{name}] 超时\\n", step_id, queues)
+        await broker.emit(deployment_id, "stderr", f"[{name}] 超时\n", step_id, queues)
     except Exception as exc:
         kill_process_group(proc)
         await proc.wait()
         code = 1
         was_cancelled = False
-        await broker.emit(deployment_id, "stderr", f"[{name}] {exc}\\n", step_id, queues)
+        await broker.emit(deployment_id, "stderr", f"[{name}] {exc}\n", step_id, queues)
     finally:
         watcher.cancel()
 
