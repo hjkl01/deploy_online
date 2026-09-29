@@ -56,6 +56,7 @@ class Deployment(Base):
     config_snapshot = Column(Text)
     note = Column(Text, default="")
     cancel_requested = Column(Boolean, default=False, index=True)
+    state_version = Column(Integer, default=0, nullable=False)
     before_sha = Column(String(64))
     after_sha = Column(String(64))
     retry_of = Column(ForeignKey("deployments.id", ondelete="SET NULL"))
