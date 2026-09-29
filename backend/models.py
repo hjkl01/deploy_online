@@ -1,4 +1,5 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, Boolean
+from sqlalchemy.orm import relationship
 from config import Base, now
 
 class User(Base):
@@ -16,6 +17,8 @@ class Project(Base):
     branch = Column(String(255), default="main")
     shell = Column(String(20), default="bash")
     enabled = Column(Boolean, default=True)
+    steps = relationship("Step", back_populates="project", cascade="all, delete-orphan")
+    envs = relationship("Env", back_populates="project", cascade="all, delete-orphan")
 
 class Step(Base):
     __tablename__ = "steps"
@@ -29,6 +32,7 @@ class Step(Base):
     timeout = Column(Integer, default=3600)
     continue_on_error = Column(Boolean, default=False)
     position = Column(Integer, default=0)
+    project = relationship("Project", back_populates="steps")
 
 class Env(Base):
     __tablename__ = "envs"
@@ -37,6 +41,7 @@ class Env(Base):
     key = Column(String(255))
     value = Column(Text, default="")
     is_secret = Column(Boolean, default=False)
+    project = relationship("Project", back_populates="envs")
 
 class Deployment(Base):
     __tablename__ = "deployments"
@@ -46,6 +51,8 @@ class Deployment(Base):
     status = Column(String(30), default="pending", index=True)
     exit_code = Column(Integer)
     created_at = Column(DateTime, default=now, index=True)
+    deployment = relationship("Deployment", back_populates="logs")
+    step = relationship("DeploymentStep")
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
     config_snapshot = Column(Text)
@@ -56,6 +63,11 @@ class Deployment(Base):
     retry_of = Column(ForeignKey("deployments.id", ondelete="SET NULL"))
     Index("ix_deployments_project_created", "project_id", "created_at")
     Index("ix_deployments_status_created", "status", "created_at")
+    project = relationship("Project")
+    user = relationship("User")
+    retry_parent = relationship("Deployment", remote_side="Deployment.id", foreign_keys=[retry_of])
+    steps = relationship("DeploymentStep", back_populates="deployment", cascade="all, delete-orphan")
+    logs = relationship("Log", back_populates="deployment", cascade="all, delete-orphan")
 
 class DeploymentStep(Base):
     __tablename__ = "deployment_steps"
@@ -71,6 +83,8 @@ class DeploymentStep(Base):
     duration_ms = Column(Integer)
     error = Column(Text, default="")
     Index("ix_deployment_steps_deployment_position", "deployment_id", "position")
+    deployment = relationship("Deployment", back_populates="steps")
+    source_step = relationship("Step")
 
 class Log(Base):
     __tablename__ = "logs"
