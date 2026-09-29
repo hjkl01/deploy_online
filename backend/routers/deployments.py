@@ -5,9 +5,9 @@ from sqlalchemy.orm import Session
 
 from config import now
 from dependencies import dbdep, role, user
-from models import Deployment, DeploymentStep, Log, Project, User
+from models import Deployment, DeploymentStep, Log, Project, ProjectMember, User
 from services.deployment import snapshot_project
-from services.permissions import require_project_deploy_access
+from services.permissions import require_project_deploy_access, require_project_view_access
 from services.repository import get_deployment, get_deployment_with_names, list_deployment_logs, list_deployment_steps, list_deployments
 
 router = APIRouter(prefix="/api", tags=["deployments"])
@@ -35,7 +35,7 @@ def deployments(project_id: int | None = None, status: str | None = None, page: 
     page, page_size = max(1, page), max(1, min(page_size, 100))
     if status is not None and status not in ("pending", "running", "success", "failed", "cancelled"):
         raise HTTPException(400, "状态无效")
-    total, rows = list_deployments(d, project_id, status, page, page_size)
+    total, rows = list_deployments(d, project_id, status, page, page_size, u)
     return {"total": total, "page": page, "page_size": page_size, "items": [
         {"id": j.id, "project_id": j.project_id, "project_name": project_name or f"项目 #{j.project_id}", "user_id": j.user_id, "username": username or "-", "status": j.status, "exit_code": j.exit_code, "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at}
         for j, project_name, username in rows
@@ -48,12 +48,17 @@ def deployment(did: int, d: Session = Depends(dbdep), u=Depends(user)):
     if not row:
         raise HTTPException(404, "部署不存在")
     j, project_name, username = row
+    require_project_view_access(d, j.project_id, u)
     steps = list_deployment_steps(d, did)
     return {"id": j.id, "project_id": j.project_id, "project_name": project_name or f"项目 #{j.project_id}", "user_id": j.user_id, "username": username or "-", "status": j.status, "exit_code": j.exit_code, "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at, "note": j.note, "before_sha": j.before_sha, "after_sha": j.after_sha, "retry_of": j.retry_of, "steps": [{"id": s.id, "source_step_id": s.source_step_id, "position": s.position, "name": s.name, "status": s.status, "started_at": s.started_at, "finished_at": s.finished_at, "exit_code": s.exit_code, "duration_ms": s.duration_ms, "error": s.error} for s in steps]}
 
 
 @router.get("/{did}/logs")
 def logs(did: int, d: Session = Depends(dbdep), u=Depends(user)):
+    j = get_deployment(d, did)
+    if not j:
+        raise HTTPException(404, "部署不存在")
+    require_project_view_access(d, j.project_id, u)
     return [{"id": x.id, "step_id": x.step_id, "stream": x.stream, "message": x.message} for x in list_deployment_logs(d, did)]
 
 
