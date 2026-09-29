@@ -29,7 +29,7 @@ API 服务和 Worker 是两个独立 systemd 服务。Worker 负责实际执行�
 ## 部署
 ### 1. 配置
 cp backend/.env.example backend/.env
-至少修改 SECRET_KEY、ADMIN_USERNAME、ADMIN_PASSWORD。
+至少修改 SECRET_KEY、ADMIN_USERNAME、ADMIN_PASSWORD。应用会拒绝使用默认 SECRET_KEY 或默认管理员密码启动。
 首次启动且数据库没有用户时，会创建管理员账号。
 
 ### 2. 安装依赖
