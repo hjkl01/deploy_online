@@ -98,7 +98,7 @@ def retry_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("admi
 
 @router.post("/{did}/note")
 def update_deployment_note(did: int, note: str, d: Session = Depends(dbdep), u=Depends(role("admin", "operator"))):
-    j = d.get(Deployment, did)
+    j = get_deployment(d, did)
     if not j:
         raise HTTPException(404, "部署不存在")
     j.note = note[:2000]
