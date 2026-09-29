@@ -42,6 +42,14 @@ def claim_pending(active_project_ids, capacity):
         if active_project_ids:
             query = query.filter(~Deployment.project_id.in_(active_project_ids))
 
+        # 即使误启动了多个 Worker，也不能让同一项目同时执行。
+        running_project_ids = (
+            d.query(Deployment.project_id)
+            .filter(Deployment.status == "running")
+            .distinct()
+        )
+        query = query.filter(~Deployment.project_id.in_(running_project_ids))
+
         # 需要多取一些候选，避免前面的 pending 都属于同一个项目导致后面的项目长期饥饿。
         pending = query.order_by(Deployment.id).limit(max(capacity * 4, 100)).all()
 
