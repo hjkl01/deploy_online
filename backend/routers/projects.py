@@ -109,7 +109,7 @@ def create_project(x: ProjectIn, d: Session = Depends(dbdep), u=Depends(role("ad
 
 @router.put("/{pid}")
 def update_project(pid: int, x: ProjectIn, d: Session = Depends(dbdep), u=Depends(role("admin"))):
-    validate_project(x)
+    validate_project(x, d)
     p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
