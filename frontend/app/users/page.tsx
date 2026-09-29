@@ -26,10 +26,12 @@ const ROLE_META: Record<string, { label: string; tone: string; description: stri
   },
 };
 
-type User = { id: number; username: string; role: string };
+type Project = { id: number; name: string };
+type User = { id: number; username: string; role: string; project_ids?: number[]; projects?: Project[] };
 
 export default function Users() {
   const [users, setUsers] = useState<User[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [form, setForm] = useState<any>(null);
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,15 @@ export default function Users() {
       }
       if (!r.ok) throw new Error("加载用户失败");
       setAllowed(true);
-      setUsers(await r.json());
+      const [userData, projectData] = await Promise.all([
+        r.json(),
+        fetch(API + "/api/projects", { credentials: "include" }).then(async (response) => {
+          if (!response.ok) throw new Error("加载项目失败");
+          return response.json();
+        }),
+      ]);
+      setUsers(userData);
+      setProjects(projectData.map((project: any) => ({ id: project.id, name: project.name })));
     } catch (e: any) {
       setError(e.message || "加载用户失败");
     } finally {
@@ -107,6 +117,7 @@ export default function Users() {
       setError("密码不能超过 72 字节");
       return;
     }
+    const projectIds = form.role === "operator" ? (form.project_ids || []) : [];
 
     setSaving(true);
     try {
@@ -115,7 +126,7 @@ export default function Users() {
         method: edit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, project_ids: projectIds }),
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
@@ -157,7 +168,7 @@ export default function Users() {
           <a href="/">首页</a>
           <a href="/projects">项目</a>
           <a href="/deployments">部署记录</a>
-          <button onClick={() => { setError(""); setForm({ ...EMPTY }); }}>+ 添加用户</button>
+          <button onClick={() => { setError(""); setForm({ ...EMPTY, project_ids: [] }); }}>+ 添加用户</button>
         </div>
       </div>
 
@@ -251,6 +262,48 @@ export default function Users() {
             <span className={`role-symbol small ${ROLE_META[form.role].tone}`}>{form.role === "admin" ? "A" : form.role === "operator" ? "O" : "V"}</span>
             <div><strong>{ROLE_META[form.role].label}</strong><span>{ROLE_META[form.role].description}</span></div>
           </div>
+          {form.role === "operator" && (
+            <div className="project-permission-editor">
+              <div className="project-permission-head">
+                <div>
+                  <strong>可部署项目</strong>
+                  <span>仅允许该操作员在选中的项目上执行部署。</span>
+                </div>
+                <span className="badge">{(form.project_ids || []).length} 个</span>
+              </div>
+              {projects.length === 0 ? (
+                <div className="permission-note">当前还没有项目，请先创建项目配置。</div>
+              ) : (
+                <div className="project-permission-grid">
+                  {projects.map((project) => {
+                    const selected = (form.project_ids || []).includes(project.id);
+                    return (
+                      <label key={project.id} className={`project-permission-option ${selected ? "selected" : ""}`}>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(e) => {
+                            const current = form.project_ids || [];
+                            setForm({
+                              ...form,
+                              project_ids: e.target.checked
+                                ? [...current, project.id]
+                                : current.filter((id: number) => id !== project.id),
+                            });
+                          }}
+                        />
+                        <span className="project-permission-check">{selected ? "✓" : ""}</span>
+                        <span>
+                          <strong>{project.name}</strong>
+                          <small>项目 #{project.id}</small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           <div className="actions">
             <button onClick={save} disabled={saving}>{saving ? "保存中..." : "保存用户"}</button>
             <button className="secondary" onClick={() => setForm(null)}>取消</button>
@@ -272,13 +325,14 @@ export default function Users() {
                 <div className="user-main">
                   <strong>{u.username}</strong>
                   <span>ID #{u.id}</span>
+                  {u.role === "operator" && <span>{u.projects?.length || 0} 个可部署项目</span>}
                 </div>
                 <div className="user-role-cell">
                   <span className={`role-badge ${role.tone}`}>{role.label}</span>
                   <small>{role.description}</small>
                 </div>
                 <div className="user-actions">
-                  <button className="secondary" onClick={() => { setError(""); setForm({ ...u, password: "" }); }}>编辑</button>
+                  <button className="secondary" onClick={() => { setError(""); setForm({ ...u, password: "", project_ids: u.project_ids || [] }); }}>编辑</button>
                   <button className="danger" onClick={() => remove(u)}>删除</button>
                 </div>
               </div>
