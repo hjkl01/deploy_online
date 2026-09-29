@@ -32,3 +32,4 @@ class UserIn(BaseModel):
  username:str
  password:str=""
  role:str="viewer"
+ project_ids:list[int]=Field(default_factory=list)
