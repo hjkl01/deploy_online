@@ -1,11 +1,12 @@
 FRONTEND_DIR ?= frontend
 FRONTEND_DIST ?= $(CURDIR)/backend/static
 
-.PHONY: help frontend-build backend dev
+.PHONY: help frontend-build backend db-upgrade dev
 
 help:
 	@echo "make frontend-build  构建 Next.js 前端并复制到指定目录"
 	@echo "make backend         启动后端"
+	@echo "make db-upgrade      执行 Alembic 数据库迁移"
 	@echo "make dev             构建前端、准备静态文件并启动后端"
 	@echo ""
 	@echo "可覆盖变量："
@@ -20,5 +21,8 @@ frontend-build:
 
 backend:
 	cd backend && uv run uvicorn app:app --host 0.0.0.0 --port 8000
+
+db-upgrade:
+	cd backend && uv run alembic upgrade head
 
 dev: frontend-build backend
