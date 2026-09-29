@@ -9,7 +9,7 @@ from config import SessionLocal, engine, settings
 from models import User, Env, Log
 from security import encrypt_secret, hash_password
 
-BASE_TABLES = {"users", "projects", "steps", "envs", "deployments", "deployment_steps", "logs"}
+BASE_TABLES = {"users", "projects", "project_members", "steps", "envs", "deployments", "deployment_steps", "logs"}
 
 
 def _alembic_config():
@@ -24,6 +24,7 @@ def _schema_matches_models():
     expected = {
         "users": {"id", "username", "password_hash", "role"},
         "projects": {"id", "name", "description", "branch", "shell", "enabled"},
+        "project_members": {"id", "project_id", "user_id"},
         "steps": {"id", "project_id", "name", "step_type", "cwd", "command", "enabled", "timeout", "continue_on_error", "position"},
         "envs": {"id", "project_id", "key", "value", "is_secret"},
         "deployments": {"id", "project_id", "user_id", "status", "exit_code", "created_at", "started_at", "finished_at", "config_snapshot", "note", "cancel_requested", "before_sha", "after_sha", "retry_of"},
