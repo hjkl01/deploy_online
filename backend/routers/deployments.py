@@ -105,6 +105,7 @@ def update_deployment_note(did: int, note: str, d: Session = Depends(dbdep), u=D
     j = get_deployment(d, did)
     if not j:
         raise HTTPException(404, "部署不存在")
+    require_project_deploy_access(d, j.project_id, u)
     j.note = note[:2000]
     d.commit()
     return {"ok": True, "note": j.note}
