@@ -42,10 +42,15 @@ def claim_pending(active_project_ids, capacity):
         if active_project_ids:
             query = query.filter(~Deployment.project_id.in_(active_project_ids))
 
-        pending = query.order_by(Deployment.id).limit(capacity).all()
-        candidates = []
+        # 需要多取一些候选，避免前面的 pending 都属于同一个项目导致后面的项目长期饥饿。
+        pending = query.order_by(Deployment.id).limit(max(capacity * 4, 100)).all()
 
+        candidates = []
+        reserved_projects = set(active_project_ids)
         for job in pending:
+            if job.project_id in reserved_projects:
+                continue
+
             result = d.execute(
                 update(Deployment)
                 .where(
@@ -57,11 +62,17 @@ def claim_pending(active_project_ids, capacity):
                     started_at=now(),
                 )
             )
-            if result.rowcount == 1:
-                candidates.append((job.id, job.project_id))
+            if result.rowcount != 1:
+                continue
+
+            candidates.append((job.id, job.project_id))
+            reserved_projects.add(job.project_id)
+            if len(candidates) >= capacity:
+                break
 
         if candidates:
             d.commit()
+            active_project_ids.update(project_id for _, project_id in candidates)
 
         return candidates
     except Exception:
