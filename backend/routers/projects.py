@@ -9,7 +9,7 @@ from dependencies import dbdep, role
 from models import Deployment, Env, Project
 from schemas import ProjectIn
 from security import encrypt_secret
-from services.repository import get_project, project_has_deployments, replace_project_children
+from services.repository import get_project, list_projects, project_has_deployments, replace_project_children
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -65,7 +65,7 @@ def save_project(x, p, d):
 
 @router.get("")
 def projects(d: Session = Depends(dbdep), u=Depends(role("admin", "operator", "viewer"))):
-    return [project_out(p) for p in d.query(Project).order_by(Project.id.desc())]
+    return [project_out(p) for p in list_projects(d)]
 
 
 @router.get("/{pid}")
