@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
 
 settings = Settings()
+
+if settings.secret_key == "change-me":
+    raise RuntimeError("SECRET_KEY 未配置，请在 .env 中设置随机长字符串")
+if settings.admin_password == "admin":
+    raise RuntimeError("ADMIN_PASSWORD 未配置，请在 .env 中设置管理员密码")
+
 Path("data").mkdir(exist_ok=True)
 engine = create_engine(
     settings.database_url,
