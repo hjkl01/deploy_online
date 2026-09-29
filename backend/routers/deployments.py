@@ -7,6 +7,7 @@ from config import now
 from dependencies import dbdep, role, user
 from models import Deployment, DeploymentStep, Log, Project, User
 from services.deployment import snapshot_project
+from services.repository import get_deployment, get_deployment_with_names, list_deployment_logs, list_deployment_steps
 
 router = APIRouter(prefix="/api", tags=["deployments"])
 
@@ -47,22 +48,22 @@ def deployments(project_id: int | None = None, status: str | None = None, page: 
 
 @router.get("/{did}")
 def deployment(did: int, d: Session = Depends(dbdep), u=Depends(user)):
-    row = d.query(Deployment, Project.name, User.username).outerjoin(Project, Project.id == Deployment.project_id).outerjoin(User, User.id == Deployment.user_id).filter(Deployment.id == did).first()
+    row = get_deployment_with_names(d, did)
     if not row:
         raise HTTPException(404, "部署不存在")
     j, project_name, username = row
-    steps = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
+    steps = list_deployment_steps(d, did)
     return {"id": j.id, "project_id": j.project_id, "project_name": project_name or f"项目 #{j.project_id}", "user_id": j.user_id, "username": username or "-", "status": j.status, "exit_code": j.exit_code, "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at, "note": j.note, "before_sha": j.before_sha, "after_sha": j.after_sha, "retry_of": j.retry_of, "steps": [{"id": s.id, "source_step_id": s.source_step_id, "position": s.position, "name": s.name, "status": s.status, "started_at": s.started_at, "finished_at": s.finished_at, "exit_code": s.exit_code, "duration_ms": s.duration_ms, "error": s.error} for s in steps]}
 
 
 @router.get("/{did}/logs")
 def logs(did: int, d: Session = Depends(dbdep), u=Depends(user)):
-    return [{"id": x.id, "step_id": x.step_id, "stream": x.stream, "message": x.message} for x in d.query(Log).filter_by(deployment_id=did).order_by(Log.id)]
+    return [{"id": x.id, "step_id": x.step_id, "stream": x.stream, "message": x.message} for x in list_deployment_logs(d, did)]
 
 
 @router.post("/{did}/cancel")
 def cancel_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("admin", "operator"))):
-    j = d.get(Deployment, did)
+    j = get_deployment(d, did)
     if not j:
         raise HTTPException(404, "部署不存在")
     if j.status not in ("pending", "running"):
@@ -78,7 +79,7 @@ def cancel_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("adm
 
 @router.post("/{did}/retry")
 def retry_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("admin", "operator"))):
-    old = d.get(Deployment, did)
+    old = get_deployment(d, did)
     if not old:
         raise HTTPException(404, "部署不存在")
     if old.status not in ("failed", "cancelled"):
