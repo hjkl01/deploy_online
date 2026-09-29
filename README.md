@@ -103,5 +103,6 @@ Router 继续负责 HTTP 参数校验、权限和响应格式；Service/Reposito
 - `services/execution.py`：Shell 命令、Git Pull、健康检查、超时和进程终止
 - `services/deployment_state.py`：部署及步骤状态的数据库更新
 - `services/logging.py`：部署日志批量落库
+- `services/worker_state.py`：Worker 的 stale recovery 和 pending 任务原子领取
 
-Worker 继续调用 `services.deployment.run()`，因此 Worker 不需要了解具体执行步骤。
+Worker 继续调用 `services.deployment.run()`，因此 Worker 不需要了解具体执行步骤；任务状态恢复和领取也不再直接堆积在 `worker.py` 中。
