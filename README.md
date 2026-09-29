@@ -106,3 +106,7 @@ Router 继续负责 HTTP 参数校验、权限和响应格式；Service/Reposito
 - `services/worker_state.py`：Worker 的 stale recovery 和 pending 任务原子领取
 
 Worker 继续调用 `services.deployment.run()`，因此 Worker 不需要了解具体执行步骤；任务状态恢复和领取也不再直接堆积在 `worker.py` 中。
+
+### Worker 优雅退出
+
+Worker 收到 systemd 的 SIGTERM/SIGINT 后会停止领取新任务，并等待当前部署最多 30 秒。超过等待时间后会取消剩余部署 Task；执行中的 Shell 进程会在取消时主动终止，避免留下后台进程。systemd 使用 `Restart=on-failure`，正常停止不会被自动重新拉起。
