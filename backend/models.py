@@ -41,8 +41,8 @@ class Env(Base):
 class Deployment(Base):
     __tablename__ = "deployments"
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, index=True)
-    user_id = Column(Integer, index=True)
+    project_id = Column(ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    user_id = Column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     status = Column(String(30), default="pending", index=True)
     exit_code = Column(Integer)
     created_at = Column(DateTime, default=now, index=True)
@@ -53,7 +53,7 @@ class Deployment(Base):
     cancel_requested = Column(Boolean, default=False, index=True)
     before_sha = Column(String(64))
     after_sha = Column(String(64))
-    retry_of = Column(Integer)
+    retry_of = Column(ForeignKey("deployments.id", ondelete="SET NULL"))
     Index("ix_deployments_project_created", "project_id", "created_at")
     Index("ix_deployments_status_created", "status", "created_at")
 
@@ -75,8 +75,8 @@ class DeploymentStep(Base):
 class Log(Base):
     __tablename__ = "logs"
     id = Column(Integer, primary_key=True)
-    deployment_id = Column(Integer, index=True)
-    step_id = Column(Integer, index=True)
+    deployment_id = Column(ForeignKey("deployments.id", ondelete="CASCADE"), index=True)
+    step_id = Column(ForeignKey("deployment_steps.id", ondelete="SET NULL"), index=True)
     stream = Column(String(20))
     message = Column(Text)
     created_at = Column(DateTime, default=now, index=True)
