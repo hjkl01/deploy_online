@@ -14,7 +14,7 @@ from services.repository import get_project, list_projects, project_has_deployme
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-def validate_project(x: ProjectIn):
+def validate_project(x: ProjectIn, d: Session):
     if not x.name.strip() or len(x.name) > 200:
         raise HTTPException(400, "项目名称无效")
     if not x.branch.strip() or len(x.branch) > 255:
@@ -97,7 +97,7 @@ def project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "oper
 
 @router.post("")
 def create_project(x: ProjectIn, d: Session = Depends(dbdep), u=Depends(role("admin"))):
-    validate_project(x)
+    validate_project(x, d)
     p = Project(name=x.name, description=x.description, branch=x.branch, shell=x.shell, enabled=x.enabled)
     d.add(p)
     d.flush()
