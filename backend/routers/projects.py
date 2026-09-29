@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from dependencies import dbdep, role
-from models import Deployment, Env, Project
+from models import Deployment, Env, Project, ProjectMember, User
 from schemas import ProjectIn
 from security import encrypt_secret
 from services.repository import get_project, list_projects, project_has_deployments, replace_project_children
@@ -42,6 +42,13 @@ def validate_project(x: ProjectIn):
     for env in x.environment:
         if not env.key or "=" in env.key or "\x00" in env.key or len(env.key) > 255:
             raise HTTPException(400, "环境变量名无效")
+    member_ids = set(x.member_ids)
+    if len(member_ids) != len(x.member_ids):
+        raise HTTPException(400, "部署成员不能重复")
+    if member_ids:
+        members = d.query(User).filter(User.id.in_(member_ids)).all()
+        if len(members) != len(member_ids) or any(member.role != "operator" for member in members):
+            raise HTTPException(400, "部署成员必须是有效的操作员")
 
 
 def project_out(p):
@@ -50,6 +57,9 @@ def project_out(p):
 
 def save_project(x, p, d):
     p.name, p.description, p.branch, p.shell, p.enabled = x.name, x.description, x.branch, x.shell, x.enabled
+    d.query(ProjectMember).filter_by(project_id=p.id).delete(synchronize_session=False)
+    for member_id in x.member_ids:
+        d.add(ProjectMember(project_id=p.id, user_id=member_id))
     existing_secret = {e.key: e.value for e in d.query(Env).filter_by(project_id=p.id, is_secret=True).all()}
     steps_data = [step.model_dump() for step in x.steps]
     env_data = []
@@ -65,7 +75,12 @@ def save_project(x, p, d):
 
 @router.get("")
 def projects(d: Session = Depends(dbdep), u=Depends(role("admin", "operator", "viewer"))):
-    return [project_out(p) for p in list_projects(d)]
+    result = []
+    for p in list_projects(d):
+        item = project_out(p)
+        item["can_deploy"] = u.role == "admin" or d.query(ProjectMember.id).filter_by(project_id=p.id, user_id=u.id).first() is not None
+        result.append(item)
+    return result
 
 
 @router.get("/{pid}")
@@ -76,6 +91,7 @@ def project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "oper
     x = project_out(p)
     x["steps"] = [{"id": s.id, "name": s.name, "step_type": s.step_type, "cwd": s.cwd, "command": s.command, "enabled": s.enabled, "timeout": s.timeout, "continue_on_error": s.continue_on_error, "position": s.position} for s in p.steps]
     x["environment"] = [{"id": e.id, "key": e.key, "value": "" if e.is_secret else e.value, "is_secret": e.is_secret} for e in p.envs]
+    x["member_ids"] = [member.user_id for member in p.members]
     return x
 
 
