@@ -340,6 +340,83 @@ export default function Users() {
           })}
         </div>
       )}
+      <style jsx global>{`
+        .project-permission-editor {
+          margin-top: 22px;
+          padding-top: 20px;
+          border-top: 1px solid var(--border);
+        }
+        .project-permission-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 12px;
+        }
+        .project-permission-head > div {
+          display: grid;
+          gap: 4px;
+        }
+        .project-permission-head span {
+          color: var(--muted);
+          font-size: 13px;
+        }
+        .project-permission-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .project-permission-option {
+          display: flex;
+          align-items: center;
+          gap: 11px;
+          padding: 13px 14px;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          cursor: pointer;
+          transition: .16s ease;
+          background: var(--surface);
+        }
+        .project-permission-option:hover,
+        .project-permission-option.selected {
+          border-color: var(--primary);
+          background: rgba(37, 99, 235, .045);
+        }
+        .project-permission-option input {
+          position: absolute;
+          opacity: 0;
+          pointer-events: none;
+        }
+        .project-permission-check {
+          width: 20px;
+          height: 20px;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 800;
+          flex: 0 0 auto;
+        }
+        .project-permission-option.selected .project-permission-check {
+          color: white;
+          background: var(--primary);
+          border-color: var(--primary);
+        }
+        .project-permission-option > span:last-child {
+          display: grid;
+          gap: 3px;
+          min-width: 0;
+        }
+        .project-permission-option small {
+          color: var(--muted);
+        }
+        @media (max-width: 720px) {
+          .project-permission-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
     </main>
   );
 }
