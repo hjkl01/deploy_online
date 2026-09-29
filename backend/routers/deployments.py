@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from config import now
 from dependencies import dbdep, role, user
-from models import Deployment, DeploymentStep, Log, Project, ProjectMember, User
+from models import Deployment, DeploymentStep, Log, Project, User
 from services.deployment import snapshot_project
 from services.permissions import require_project_deploy_access, require_project_view_access
 from services.repository import get_deployment, get_deployment_with_names, list_deployment_logs, list_deployment_steps, list_deployments
