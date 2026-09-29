@@ -19,6 +19,15 @@ class Project(Base):
     enabled = Column(Boolean, default=True)
     steps = relationship("Step", back_populates="project", cascade="all, delete-orphan")
     envs = relationship("Env", back_populates="project", cascade="all, delete-orphan")
+    members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
+
+class ProjectMember(Base):
+    __tablename__ = "project_members"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    project = relationship("Project", back_populates="members")
+    user = relationship("User")
 
 class Step(Base):
     __tablename__ = "steps"
