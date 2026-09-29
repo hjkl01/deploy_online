@@ -7,6 +7,7 @@ from config import now
 from dependencies import dbdep, role, user
 from models import Deployment, DeploymentStep, Log, Project, User
 from services.deployment import snapshot_project
+from services.permissions import require_project_deploy_access
 from services.repository import get_deployment, get_deployment_with_names, list_deployment_logs, list_deployment_steps, list_deployments
 
 router = APIRouter(prefix="/api", tags=["deployments"])
@@ -17,6 +18,7 @@ def deploy(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "opera
     p = d.get(Project, pid)
     if not p or not p.enabled:
         raise HTTPException(404, "项目不存在或已禁用")
+    require_project_deploy_access(d, pid, u)
     job = Deployment(project_id=pid, user_id=u.id, config_snapshot=snapshot_project(p))
     d.add(job)
     d.flush()
@@ -60,6 +62,7 @@ def cancel_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("adm
     j = get_deployment(d, did)
     if not j:
         raise HTTPException(404, "部署不存在")
+    require_project_deploy_access(d, j.project_id, u)
     if j.status not in ("pending", "running"):
         raise HTTPException(409, "部署已经结束")
     j.cancel_requested = True
@@ -77,6 +80,7 @@ def retry_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("admi
     old = get_deployment(d, did)
     if not old:
         raise HTTPException(404, "部署不存在")
+    require_project_deploy_access(d, old.project_id, u)
     if old.status not in ("failed", "cancelled"):
         raise HTTPException(409, "只有失败或取消的部署可以重试")
     job = Deployment(project_id=old.project_id, user_id=u.id, status="pending", config_snapshot=old.config_snapshot, note=old.note, retry_of=old.id)
