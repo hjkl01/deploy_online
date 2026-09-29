@@ -13,6 +13,22 @@ def _copy_table(old, new, columns):
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    orphan_checks = [
+        ("steps.project_id", "SELECT COUNT(*) FROM steps s LEFT JOIN projects p ON p.id = s.project_id WHERE s.project_id IS NOT NULL AND p.id IS NULL"),
+        ("envs.project_id", "SELECT COUNT(*) FROM envs e LEFT JOIN projects p ON p.id = e.project_id WHERE e.project_id IS NOT NULL AND p.id IS NULL"),
+        ("deployments.project_id", "SELECT COUNT(*) FROM deployments d LEFT JOIN projects p ON p.id = d.project_id WHERE d.project_id IS NOT NULL AND p.id IS NULL"),
+        ("deployments.user_id", "SELECT COUNT(*) FROM deployments d LEFT JOIN users u ON u.id = d.user_id WHERE d.user_id IS NOT NULL AND u.id IS NULL"),
+        ("deployments.retry_of", "SELECT COUNT(*) FROM deployments d LEFT JOIN deployments parent ON parent.id = d.retry_of WHERE d.retry_of IS NOT NULL AND parent.id IS NULL"),
+        ("deployment_steps.deployment_id", "SELECT COUNT(*) FROM deployment_steps s LEFT JOIN deployments d ON d.id = s.deployment_id WHERE s.deployment_id IS NOT NULL AND d.id IS NULL"),
+        ("deployment_steps.source_step_id", "SELECT COUNT(*) FROM deployment_steps s LEFT JOIN steps x ON x.id = s.source_step_id WHERE s.source_step_id IS NOT NULL AND x.id IS NULL"),
+        ("logs.deployment_id", "SELECT COUNT(*) FROM logs l LEFT JOIN deployments d ON d.id = l.deployment_id WHERE l.deployment_id IS NOT NULL AND d.id IS NULL"),
+        ("logs.step_id", "SELECT COUNT(*) FROM logs l LEFT JOIN deployment_steps s ON s.id = l.step_id WHERE l.step_id IS NOT NULL AND s.id IS NULL"),
+    ]
+    for name, query in orphan_checks:
+        if bind.execute(sa.text(query)).scalar_one():
+            raise RuntimeError(f"数据库存在孤立外键数据: {name}，请先修复数据后再执行 Migration。")
+
     # SQLite requires child tables to be removed before their parent tables
     # when foreign_keys=ON. Build the complete replacement schema first.
     op.create_table("users_new",
