@@ -31,17 +31,12 @@ def project_has_deployments(d: Session, project_id: int):
 
 
 def replace_project_children(d: Session, project: Project, steps_data, env_data):
-    existing_secret = {
-        e.key: e.value
-        for e in d.query(Env).filter_by(project_id=project.id, is_secret=True).all()
-    }
     d.query(Step).filter_by(project_id=project.id).delete(synchronize_session=False)
     d.query(Env).filter_by(project_id=project.id).delete(synchronize_session=False)
     for position, data in enumerate(steps_data):
         d.add(Step(project_id=project.id, position=position, **data))
     for data in env_data:
         d.add(Env(project_id=project.id, **data))
-    return existing_secret
 
 
 def list_deployment_steps(d: Session, deployment_id: int):
