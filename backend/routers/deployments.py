@@ -8,10 +8,10 @@ from dependencies import dbdep, role, user
 from models import Deployment, DeploymentStep, Log, Project, User
 from services.deployment import snapshot_project
 
-router = APIRouter(prefix="/api/deployments", tags=["deployments"])
+router = APIRouter(prefix="/api", tags=["deployments"])
 
 
-@router.post("/../projects/{pid}/deploy")
+@router.post("/projects/{pid}/deploy")
 def deploy(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "operator"))):
     p = d.get(Project, pid)
     if not p or not p.enabled:
