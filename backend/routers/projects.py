@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from dependencies import dbdep, role
-from models import Deployment, Env, Project, Step
+from models import Deployment, Project
 from schemas import ProjectIn
 from security import encrypt_secret
 from services.repository import get_project, project_has_deployments, replace_project_children
@@ -94,7 +94,7 @@ def create_project(x: ProjectIn, d: Session = Depends(dbdep), u=Depends(role("ad
 @router.put("/{pid}")
 def update_project(pid: int, x: ProjectIn, d: Session = Depends(dbdep), u=Depends(role("admin"))):
     validate_project(x)
-    p = d.get(Project, pid)
+    p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
     save_project(x, p, d)
@@ -122,7 +122,7 @@ def delete_project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin"
 def yaml_export(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "operator", "viewer"))):
     import yaml
 
-    p = d.get(Project, pid)
+    p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
     return yaml.safe_dump(
