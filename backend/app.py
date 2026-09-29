@@ -10,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from config import SessionLocal, settings
 from database import init_database
 from http_handlers import install_http_handlers
-from models import Deployment, DeploymentStep, Log, User
+from models import Deployment, DeploymentStep, Log, ProjectMember, User
 from routers.auth import router as auth_router
 from routers.deployments import router as deployment_router
 from routers.projects import router as project_router
@@ -76,7 +76,7 @@ async def ws(w: WebSocket, did: int):
     if not job:
         await w.close(code=1008)
         return
-    if not current_user or (current_user.role == "operator" and not d.query(__import__("models").ProjectMember.id).filter_by(project_id=job.project_id, user_id=current_user.id).first()):
+    if not current_user or (current_user.role == "operator" and not d.query(ProjectMember.id).filter_by(project_id=job.project_id, user_id=current_user.id).first()):
         await w.close(code=1008)
         return
 
