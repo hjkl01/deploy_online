@@ -85,13 +85,6 @@ def init_database():
                 role="admin",
             ))
             d.flush()
-        operators = d.query(User).filter_by(role="operator").all()
-        projects = d.query(Project).all()
-        existing_pairs = {(x.project_id, x.user_id) for x in d.query(ProjectMember).all()}
-        for project in projects:
-            for operator in operators:
-                if (project.id, operator.id) not in existing_pairs:
-                    d.add(ProjectMember(project_id=project.id, user_id=operator.id))
         d.commit()
     finally:
         d.close()
