@@ -6,7 +6,7 @@ from alembic.config import Config
 from sqlalchemy import inspect
 
 from config import SessionLocal, engine, settings
-from models import User, Env, Log, Project, ProjectMember
+from models import User, Env, Log, Project
 from security import encrypt_secret, hash_password
 
 BASE_TABLES = {"users", "projects", "project_members", "steps", "envs", "deployments", "deployment_steps", "logs"}
