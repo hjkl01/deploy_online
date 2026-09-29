@@ -67,6 +67,7 @@ def cancel_deployment(did: int, d: Session = Depends(dbdep), u=Depends(role("adm
         j.status, j.exit_code, j.finished_at = "cancelled", 130, now()
         for step in d.query(DeploymentStep).filter_by(deployment_id=did, status="pending").all():
             step.status, step.finished_at, step.exit_code, step.error = "cancelled", j.finished_at, 130, "部署取消"
+        j.state_version += 1
     d.commit()
     return {"ok": True, "status": j.status}
 
