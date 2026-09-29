@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from models import Deployment, DeploymentStep, Env, Log, Project, Step, User
+from models import Deployment, DeploymentStep, Env, Log, Project, ProjectMember, Step, User
 
 
 def list_users(d: Session):
@@ -47,8 +47,10 @@ def list_deployment_steps(d: Session, deployment_id: int):
     return d.query(DeploymentStep).filter_by(deployment_id=deployment_id).order_by(DeploymentStep.position).all()
 
 
-def list_deployments(d: Session, project_id=None, status=None, page=1, page_size=20):
+def list_deployments(d: Session, project_id=None, status=None, page=1, page_size=20, viewer: User | None = None):
     q = d.query(Deployment, Project.name, User.username).outerjoin(Project, Project.id == Deployment.project_id).outerjoin(User, User.id == Deployment.user_id)
+    if viewer is not None and viewer.role == "operator":
+        q = q.join(ProjectMember, ProjectMember.project_id == Deployment.project_id).filter(ProjectMember.user_id == viewer.id)
     if project_id is not None:
         q = q.filter(Deployment.project_id == project_id)
     if status is not None:
