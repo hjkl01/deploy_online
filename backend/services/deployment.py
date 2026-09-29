@@ -1,180 +1,108 @@
 import asyncio
 import json
 import os
-import shlex
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 from collections import defaultdict
 from pathlib import Path
 
-from config import SessionLocal, now
-from models import Deployment, DeploymentStep, Project
+from config import SessionLocal
+from models import Deployment, Project
 from security import decrypt_secret
-from .executor import git_sha, kill_process_group, shell_command
-from .logging import broker
 from runtime import queues
+from .deployment_state import (
+    cancel_pending_steps,
+    is_cancel_requested,
+    is_running,
+    mark_step_finished,
+    mark_step_running,
+    update_git_sha,
+)
+from .execution import execute_step
+from .logging import broker
 
 project_locks = defaultdict(asyncio.Lock)
 
-ALLOWED_STEP_TYPES = {"command", "git_pull", "restart", "health_check"}
-
-def _health_check(url, timeout):
-    request = Request(url, method="GET", headers={"User-Agent": "deploy_online-health-check"})
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.status, response.reason or ""
-    except HTTPError as exc:
-        return exc.code, exc.reason or ""
-    except URLError as exc:
-        raise RuntimeError(f"health check 请求失败: {exc.reason}") from exc
 
 def snapshot_project(project):
-    return json.dumps({
-        "project": {
-            "name": project.name,
-            "branch": project.branch,
-            "shell": project.shell,
-            "enabled": project.enabled,
+    return json.dumps(
+        {
+            "project": {
+                "name": project.name,
+                "branch": project.branch,
+                "shell": project.shell,
+                "enabled": project.enabled,
+            },
+            "steps": [
+                {
+                    "id": step.id,
+                    "name": step.name,
+                    "type": step.step_type,
+                    "cwd": step.cwd,
+                    "command": step.command,
+                    "enabled": step.enabled,
+                    "timeout": step.timeout,
+                    "continue_on_error": step.continue_on_error,
+                    "position": step.position,
+                }
+                for step in project.steps
+            ],
+            "environment": [
+                {"key": env.key, "value": env.value, "is_secret": env.is_secret}
+                for env in project.envs
+            ],
         },
-        "steps": [
-            {
-                "id": step.id,
-                "name": step.name,
-                "type": step.step_type,
-                "cwd": step.cwd,
-                "command": step.command,
-                "enabled": step.enabled,
-                "timeout": step.timeout,
-                "continue_on_error": step.continue_on_error,
-                "position": step.position,
-            }
-            for step in project.steps
-        ],
-        "environment": [
-            {"key": env.key, "value": env.value, "is_secret": env.is_secret}
-            for env in project.envs
-        ],
-    }, ensure_ascii=False)
-
-async def _execute_step(deployment_id, project_cfg, env, step, cancelled):
-    step_id = step.get("id")
-    cwd = Path(step["cwd"]).expanduser().resolve()
-    step_type = step["type"]
-    if step_type not in ALLOWED_STEP_TYPES:
-        await broker.emit(deployment_id, "stderr", f'[{step["name"]}] 未知步骤类型: {step_type}\\n', step_id, queues)
-        return 1, False, None
-    if step_type == "health_check":
-        url = step["command"].strip()
-        if not url.startswith(("http://", "https://")):
-            await broker.emit(deployment_id, "stderr", f'[{step["name"]}] health_check URL 无效: {url}\\n', step_id, queues)
-            return 1, False, None
-        try:
-            status, reason = await asyncio.to_thread(_health_check, url, max(1, int(step.get("timeout") or 30)))
-            await broker.emit(deployment_id, "system", f'[{step["name"]}] HTTP {status} {reason}\\n', step_id, queues)
-            return (0 if 200 <= status < 300 else status), False, None
-        except Exception as exc:
-            await broker.emit(deployment_id, "stderr", f'[{step["name"]}] {exc}\\n', step_id, queues)
-            return 1, False, None
-    command = (
-        "git checkout " + shlex.quote(project_cfg["branch"]) + " && git pull --ff-only"
-        if step_type == "git_pull" else step["command"]
-    )
-    if not cwd.is_dir():
-        await broker.emit(deployment_id, "stderr", f'[{step["name"]}] cwd 不存在: {cwd}\n', step_id, queues)
-        return 1, False, None
-
-    if not command.strip():
-        await broker.emit(deployment_id, "system", f'[{step["name"]}] 无命令，跳过\n', step_id, queues)
-        return 0, False, None
-
-    await broker.emit(deployment_id, "system", f'\n>>> {step["name"]}\n$ {command}\n', step_id, queues)
-    proc = await asyncio.create_subprocess_exec(
-        *shell_command(project_cfg["shell"], command),
-        cwd=str(cwd),
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
+        ensure_ascii=False,
     )
 
-    async def read_stream(stream, name):
-        while line := await stream.readline():
-            await broker.emit(deployment_id, name, line.decode(errors="replace"), step_id, queues)
 
-    async def watch_cancel():
-        while proc.returncode is None:
-            await asyncio.sleep(0.5)
-            d = SessionLocal()
-            try:
-                job = d.get(Deployment, deployment_id)
-                if job and job.cancel_requested:
-                    cancelled[0] = True
-                    kill_process_group(proc)
-                    return
-            finally:
-                d.close()
-
-    watcher = asyncio.create_task(watch_cancel())
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(
-                read_stream(proc.stdout, "stdout"),
-                read_stream(proc.stderr, "stderr"),
-                proc.wait(),
-            ),
-            timeout=max(1, int(step.get("timeout") or 3600)),
-        )
-        code = 130 if cancelled[0] else proc.returncode
-    except asyncio.TimeoutError:
-        kill_process_group(proc)
-        await proc.wait()
-        code = 124
-        await broker.emit(deployment_id, "stderr", f'[{step["name"]}] 超时\n', step_id, queues)
-    except Exception as exc:
-        kill_process_group(proc)
-        await proc.wait()
-        code = 1
-        await broker.emit(deployment_id, "stderr", f'[{step["name"]}] {exc}\n', step_id, queues)
-    finally:
-        watcher.cancel()
-
-    if step["type"] == "git_pull" and code == 0:
-        return code, False, await git_sha(cwd)
-    return code, code == 130, None
-
-async def run(deployment_id):
+def _load_deployment(deployment_id):
     d = SessionLocal()
     try:
         job = d.get(Deployment, deployment_id)
         if not job:
-            return
+            return None, None, None
         project = d.get(Project, job.project_id)
         if not project:
-            await broker.emit(deployment_id, "stderr", "项目不存在，部署终止\n", None, queues)
-            await broker.finish(deployment_id, "failed", 1, queues)
-            return
-        snapshot = json.loads(job.config_snapshot) if job.config_snapshot else json.loads(snapshot_project(project))
-        project_id = project.id
+            return job, None, None
+        snapshot = (
+            json.loads(job.config_snapshot)
+            if job.config_snapshot
+            else json.loads(snapshot_project(project))
+        )
+        return job, project, snapshot
     finally:
         d.close()
 
-    async with project_locks[project_id]:
-        d = SessionLocal()
-        try:
-            job = d.get(Deployment, deployment_id)
-            if not job or job.status != "running":
-                return
-            env_values = list(json.loads(snapshot)["environment"])
-        finally:
-            d.close()
 
-        env = os.environ.copy()
-        env.update({
+def _build_environment(snapshot):
+    env = os.environ.copy()
+    env.update(
+        {
             item["key"]: decrypt_secret(item["value"]) if item["is_secret"] else item["value"]
-            for item in env_values
-        })
+            for item in snapshot["environment"]
+        }
+    )
+    return env
+
+
+async def run(deployment_id):
+    job, project, snapshot = _load_deployment(deployment_id)
+    if not job:
+        return
+    if not project:
+        await broker.emit(
+            deployment_id, "stderr", "项目不存在，部署终止\n", None, queues
+        )
+        await broker.finish(deployment_id, "failed", 1, queues)
+        return
+
+    project_id = project.id
+    async with project_locks[project_id]:
+        if not is_running(deployment_id):
+            return
+
+        env = _build_environment(snapshot)
         project_cfg = snapshot["project"]
-        cancelled = [False]
+        cancelled = False
         success = True
         exit_code = 0
         before_sha = None
@@ -182,126 +110,107 @@ async def run(deployment_id):
 
         try:
             await broker.emit(
-                deployment_id, "system",
+                deployment_id,
+                "system",
                 f'开始部署 {project_cfg["name"]}\nShell: {project_cfg["shell"]}\n',
-                None, queues,
+                None,
+                queues,
             )
 
             for step in snapshot["steps"]:
-                d = SessionLocal()
-                try:
-                    job = d.get(Deployment, deployment_id)
-                    if not job or job.cancel_requested:
-                        cancelled[0] = True
-                        for pending_step in d.query(DeploymentStep).filter_by(deployment_id=deployment_id, status="pending").all():
-                            pending_step.status = "cancelled"
-                            pending_step.finished_at = now()
-                            pending_step.exit_code = 130
-                            pending_step.error = "部署取消"
-                        d.commit()
-                        break
-                finally:
-                    d.close()
-
                 if not step["enabled"]:
                     continue
 
-                d = SessionLocal()
-                step_row = d.query(DeploymentStep).filter_by(deployment_id=deployment_id, source_step_id=step.get("id")).first()
-                if step_row:
-                    step_row.status = "running"
-                    step_row.started_at = now()
-                    d.commit()
-                d.close()
+                if is_cancel_requested(deployment_id):
+                    cancelled = True
+                    cancel_pending_steps(deployment_id)
+                    break
+
+                step_id = step.get("id")
+                mark_step_running(deployment_id, step_id)
 
                 if step["type"] == "git_pull":
-                    before_sha = await git_sha(Path(step["cwd"]).expanduser().resolve())
+                    before_sha = await _git_sha(step["cwd"])
                     if before_sha:
-                        d = SessionLocal()
-                        try:
-                            job = d.get(Deployment, deployment_id)
-                            if job:
-                                job.before_sha = before_sha
-                                d.commit()
-                        finally:
-                            d.close()
+                        update_git_sha(deployment_id, before_sha=before_sha)
 
-                code, was_cancelled, step_after_sha = await _execute_step(
-                    deployment_id, project_cfg, env, step, cancelled
+                code, was_cancelled, step_after_sha = await execute_step(
+                    deployment_id,
+                    project_cfg,
+                    env,
+                    step,
+                    [cancelled],
+                    lambda: asyncio.to_thread(is_cancel_requested, deployment_id),
                 )
+
                 if step_after_sha:
                     after_sha = step_after_sha
 
-                d = SessionLocal()
-                try:
-                    step_row = d.query(DeploymentStep).filter_by(deployment_id=deployment_id, source_step_id=step.get("id")).first()
-                    if step_row:
-                        step_row.status = "cancelled" if was_cancelled else "failed"
-                        step_row.exit_code = code
-                        step_row.finished_at = now()
-                        if step_row.started_at:
-                            step_row.duration_ms = max(0, int((step_row.finished_at - step_row.started_at).total_seconds() * 1000))
-                        if code != 0:
-                            step_row.error = f"exit={code}"
-                        d.commit()
-                finally:
-                    d.close()
+                mark_step_finished(
+                    deployment_id,
+                    step_id,
+                    code,
+                    cancelled=was_cancelled,
+                )
 
                 if code != 0:
                     success = False
                     exit_code = code
                     await broker.emit(
-                        deployment_id, "system",
+                        deployment_id,
+                        "system",
                         f'[{step["name"]}] 失败 exit={code}\n',
-                        step.get("id"), queues,
+                        step_id,
+                        queues,
                     )
                     if was_cancelled or not step["continue_on_error"]:
+                        cancelled = was_cancelled
                         break
                 else:
-                    d = SessionLocal()
-                    try:
-                        step_row = d.query(DeploymentStep).filter_by(deployment_id=deployment_id, source_step_id=step.get("id")).first()
-                        if step_row:
-                            step_row.status = "success"
-                            step_row.exit_code = 0
-                            step_row.finished_at = now()
-                            if step_row.started_at:
-                                step_row.duration_ms = max(0, int((step_row.finished_at - step_row.started_at).total_seconds() * 1000))
-                            d.commit()
-                    finally:
-                        d.close()
                     await broker.emit(
-                        deployment_id, "system",
+                        deployment_id,
+                        "system",
                         f'[{step["name"]}] 完成\n',
-                        step.get("id"), queues,
+                        step_id,
+                        queues,
                     )
 
             if before_sha or after_sha:
-                d = SessionLocal()
-                try:
-                    job = d.get(Deployment, deployment_id)
-                    if job:
-                        job.before_sha = before_sha
-                        job.after_sha = after_sha
-                        d.commit()
-                finally:
-                    d.close()
+                update_git_sha(
+                    deployment_id,
+                    before_sha=before_sha,
+                    after_sha=after_sha,
+                )
 
-            if cancelled[0]:
-                await broker.emit(deployment_id, "system", "\n部署已取消\n", None, queues)
+            if cancelled or is_cancel_requested(deployment_id):
+                await broker.emit(
+                    deployment_id, "system", "\n部署已取消\n", None, queues
+                )
                 await broker.finish(deployment_id, "cancelled", 130, queues)
             else:
                 status = "success" if success else "failed"
                 await broker.emit(
-                    deployment_id, "system",
+                    deployment_id,
+                    "system",
                     f'\n部署{"成功" if success else "失败"}\n',
-                    None, queues,
+                    None,
+                    queues,
                 )
                 await broker.finish(deployment_id, status, exit_code, queues)
         except asyncio.CancelledError:
-            await broker.emit(deployment_id, "stderr", "部署任务被 Worker 取消\n", None, queues)
+            await broker.emit(
+                deployment_id, "stderr", "部署任务被 Worker 取消\n", None, queues
+            )
             await broker.finish(deployment_id, "failed", 130, queues)
             raise
         except Exception as exc:
-            await broker.emit(deployment_id, "stderr", f"部署任务异常: {exc}\n", None, queues)
+            await broker.emit(
+                deployment_id, "stderr", f"部署任务异常: {exc}\n", None, queues
+            )
             await broker.finish(deployment_id, "failed", 1, queues)
+
+
+async def _git_sha(cwd):
+    from .executor import git_sha
+
+    return await git_sha(Path(cwd).expanduser().resolve())
