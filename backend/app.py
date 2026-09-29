@@ -107,7 +107,7 @@ async def ws(w: WebSocket, did: int):
 
     await w.accept()
     try:
-        last_step_state = step_fingerprint(initial_steps)
+        last_state_version = job.state_version
         last_log = rows[-1].id if rows else 0
 
         await w.send_json({
@@ -157,26 +157,11 @@ async def ws(w: WebSocket, did: int):
                         "message": x.message,
                     })
 
-                # 仅查询步骤的必要状态字段；只有状态发生变化时才加载完整步骤对象。
-                current_step_state = tuple(
-                    d.query(
-                        DeploymentStep.id,
-                        DeploymentStep.status,
-                        DeploymentStep.started_at,
-                        DeploymentStep.finished_at,
-                        DeploymentStep.exit_code,
-                        DeploymentStep.duration_ms,
-                        DeploymentStep.error,
-                    )
-                    .filter_by(deployment_id=did)
-                    .order_by(DeploymentStep.position)
-                    .all()
-                )
-                steps_changed = current_step_state != last_step_state
-
                 status_changed = (
                     job.status != last_status or job.exit_code != last_exit_code
                 )
+                steps_changed = job.state_version != last_state_version
+
                 if status_changed or steps_changed:
                     message = {
                         "type": "status",
@@ -192,7 +177,7 @@ async def ws(w: WebSocket, did: int):
                             .all()
                         )
                         message["steps"] = step_payload(step_rows)
-                        last_step_state = step_fingerprint(step_rows)
+                        last_state_version = job.state_version
 
                     await w.send_json(message)
                     last_status = job.status
