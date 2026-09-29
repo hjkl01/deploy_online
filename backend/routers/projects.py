@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from dependencies import dbdep, role
-from models import Deployment, Project
+from models import Deployment, Env, Project
 from schemas import ProjectIn
 from security import encrypt_secret
 from services.repository import get_project, project_has_deployments, replace_project_children
@@ -104,7 +104,7 @@ def update_project(pid: int, x: ProjectIn, d: Session = Depends(dbdep), u=Depend
 
 @router.delete("/{pid}")
 def delete_project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin"))):
-    p = d.get(Project, pid)
+    p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
     if project_has_deployments(d, pid):
