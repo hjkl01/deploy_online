@@ -84,3 +84,13 @@ Worker：cd backend && uv run python worker.py
 - `models.py`：SQLAlchemy 数据模型及关系映射
 
 新增 API 时优先放到对应 router，不再继续向 `app.py` 添加业务接口。
+
+### 数据访问层
+
+路由层不再直接承担高频查询逻辑，公共数据库访问集中在 `services/repository.py`：
+
+- 用户查询、用户名唯一性、管理员数量
+- 项目查询、项目是否存在部署历史、步骤/环境变量替换
+- 部署查询、分页列表、步骤和日志查询
+
+Router 继续负责 HTTP 参数校验、权限和响应格式；Service/Repository 负责数据库查询，避免后续功能继续把 SQLAlchemy 查询堆积到路由文件中。
