@@ -9,6 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from config import SessionLocal, settings
 from database import init_database
+from http import install_http_handlers
 from models import Deployment, DeploymentStep, Log
 from routers.auth import router as auth_router
 from routers.deployments import router as deployment_router
@@ -18,6 +19,7 @@ from routers.users import router as user_router
 init_database()
 
 app = FastAPI(title="deploy_online")
+install_http_handlers(app)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 if (STATIC_DIR / "_next").is_dir():
