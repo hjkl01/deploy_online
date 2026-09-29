@@ -72,3 +72,15 @@ Worker：cd backend && uv run python worker.py
 测试：cd backend && uv run pytest
 前端：cd frontend && npm install && npm run dev
 生产环境建议使用 systemd 管理 API 和 Worker，不建议让 uvicorn 进程直接承担部署任务。
+### 后端目录结构
+
+后端 API 已按职责拆分，`app.py` 只负责应用初始化、中间件、WebSocket 和前端静态文件：
+
+- `dependencies.py`：数据库 Session、登录用户、角色权限依赖
+- `routers/auth.py`：登录、退出、当前用户
+- `routers/users.py`：用户管理
+- `routers/projects.py`：项目、步骤、环境变量、YAML
+- `routers/deployments.py`：部署、日志、取消、重试
+- `models.py`：SQLAlchemy 数据模型及关系映射
+
+新增 API 时优先放到对应 router，不再继续向 `app.py` 添加业务接口。
