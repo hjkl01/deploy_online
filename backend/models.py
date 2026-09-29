@@ -20,7 +20,7 @@ class Project(Base):
 class Step(Base):
     __tablename__ = "steps"
     id = Column(Integer, primary_key=True)
-    project_id = Column(ForeignKey("projects.id"))
+    project_id = Column(ForeignKey("projects.id", ondelete="CASCADE"))
     name = Column(String(200))
     step_type = Column(String(30), default="command")
     cwd = Column(String(1000), default="~")
