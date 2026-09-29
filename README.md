@@ -94,3 +94,14 @@ Worker：cd backend && uv run python worker.py
 - 部署查询、分页列表、步骤和日志查询
 
 Router 继续负责 HTTP 参数校验、权限和响应格式；Service/Repository 负责数据库查询，避免后续功能继续把 SQLAlchemy 查询堆积到路由文件中。
+
+### 部署执行服务拆分
+
+部署执行流程按职责拆分为：
+
+- `services/deployment.py`：部署编排、快照和整体状态流转
+- `services/execution.py`：Shell 命令、Git Pull、健康检查、超时和进程终止
+- `services/deployment_state.py`：部署及步骤状态的数据库更新
+- `services/logging.py`：部署日志批量落库
+
+Worker 继续调用 `services.deployment.run()`，因此 Worker 不需要了解具体执行步骤。
