@@ -49,7 +49,8 @@ def migrate_database():
             raise RuntimeError(
                 "现有数据库结构与当前模型不兼容，无法自动接管。请先备份数据库，并检查缺失的表或字段。"
             )
-        command.stamp(config, "head")
+        command.stamp(config, "0001_initial")
+        command.upgrade(config, "head")
         return
     command.upgrade(config, "head")
 
