@@ -32,23 +32,19 @@ def upgrade() -> None:
             {"project_id": project_id, "user_id": user_id, "keep_id": keep_id},
         )
 
-    constraints = inspector.get_unique_constraints("project_members")
-    if not any(set(c.get("column_names", [])) == {"project_id", "user_id"} for c in constraints):
-        op.create_unique_constraint(
+    indexes = inspector.get_indexes("project_members")
+    if not any(i.get("name") == "uq_project_members_project_user" and i.get("unique") for i in indexes):
+        op.create_index(
             "uq_project_members_project_user",
             "project_members",
             ["project_id", "user_id"],
+            unique=True,
         )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     if "project_members" in sa.inspect(bind).get_table_names():
-        try:
-            op.drop_constraint(
-                "uq_project_members_project_user",
-                "project_members",
-                type_="unique",
-            )
-        except Exception:
-            pass
+        indexes = sa.inspect(bind).get_indexes("project_members")
+        if any(i.get("name") == "uq_project_members_project_user" for i in indexes):
+            op.drop_index("uq_project_members_project_user", table_name="project_members")
