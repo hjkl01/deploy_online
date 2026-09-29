@@ -15,7 +15,6 @@ from routers.auth import router as auth_router
 from routers.deployments import router as deployment_router
 from routers.projects import router as project_router
 from routers.users import router as user_router
-from services.permissions import require_project_view_access
 
 init_database()
 
@@ -63,6 +62,7 @@ async def ws(w: WebSocket, did: int):
         user_id = w.scope.get("session", {}).get("user_id")
         current_user = d.get(User, user_id) if user_id else None
         job = d.get(Deployment, did)
+        allowed = bool(current_user and job and (current_user.role in ("admin", "viewer") or d.query(ProjectMember.id).filter_by(project_id=job.project_id, user_id=current_user.id).first()))
         rows = d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all()
         initial_steps = (
             d.query(DeploymentStep)
@@ -76,7 +76,7 @@ async def ws(w: WebSocket, did: int):
     if not job:
         await w.close(code=1008)
         return
-    if not current_user or (current_user.role == "operator" and not d.query(ProjectMember.id).filter_by(project_id=job.project_id, user_id=current_user.id).first()):
+    if not allowed:
         await w.close(code=1008)
         return
 
