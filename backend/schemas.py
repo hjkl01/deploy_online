@@ -26,6 +26,7 @@ class ProjectIn(BaseModel):
  enabled:bool=True
  steps:list[StepIn]=Field(default_factory=list)
  environment:list[EnvIn]=Field(default_factory=list)
+ member_ids:list[int]=Field(default_factory=list)
 
 class UserIn(BaseModel):
  username:str
