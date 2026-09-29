@@ -15,6 +15,18 @@ def upgrade() -> None:
     if "project_members" not in inspector.get_table_names():
         return
 
+    member_count = bind.execute(sa.text("SELECT COUNT(*) FROM project_members")).scalar_one()
+    if member_count == 0:
+        bind.execute(sa.text(
+            """
+            INSERT INTO project_members (project_id, user_id)
+            SELECT p.id, u.id
+            FROM projects p
+            CROSS JOIN users u
+            WHERE u.role = 'operator'
+            """
+        ))
+
     duplicates = bind.execute(sa.text(
         """
         SELECT project_id, user_id, MIN(id) AS keep_id
