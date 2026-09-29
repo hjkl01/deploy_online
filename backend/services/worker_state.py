@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from sqlalchemy import update
 
 from config import SessionLocal, now
@@ -10,7 +8,7 @@ def recover_stale():
     """恢复 Worker 重启时遗留的 running 部署和步骤。"""
     d = SessionLocal()
     try:
-        finished_at = datetime.now(timezone.utc)
+        finished_at = now()
         rows = d.query(Deployment).filter(Deployment.status == "running").all()
         for job in rows:
             job.status = "failed"
@@ -40,19 +38,14 @@ def claim_pending(active_project_ids, capacity):
 
     d = SessionLocal()
     try:
-        pending = (
-            d.query(Deployment)
-            .filter(Deployment.status == "pending")
-            .order_by(Deployment.id)
-            .limit(max(capacity * 2, capacity))
-            .all()
-        )
+        query = d.query(Deployment).filter(Deployment.status == "pending")
+        if active_project_ids:
+            query = query.filter(~Deployment.project_id.in_(active_project_ids))
 
+        pending = query.order_by(Deployment.id).limit(capacity).all()
         candidates = []
-        for job in pending:
-            if job.project_id in active_project_ids:
-                continue
 
+        for job in pending:
             result = d.execute(
                 update(Deployment)
                 .where(
@@ -64,17 +57,15 @@ def claim_pending(active_project_ids, capacity):
                     started_at=now(),
                 )
             )
-            if result.rowcount != 1:
-                continue
-
-            candidates.append((job.id, job.project_id))
-            active_project_ids.add(job.project_id)
-            if len(candidates) >= capacity:
-                break
+            if result.rowcount == 1:
+                candidates.append((job.id, job.project_id))
 
         if candidates:
             d.commit()
 
         return candidates
+    except Exception:
+        d.rollback()
+        raise
     finally:
         d.close()
