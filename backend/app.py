@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -261,8 +262,14 @@ def delete_project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin"
     p = d.get(Project, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
-    d.delete(p)
-    d.commit()
+    if d.query(Deployment).filter_by(project_id=pid).first():
+        raise HTTPException(409, "项目已有部署记录，不能删除；如需保留历史记录，请先禁用项目")
+    try:
+        d.delete(p)
+        d.commit()
+    except IntegrityError:
+        d.rollback()
+        raise HTTPException(409, "项目存在关联数据，无法删除")
     return {"ok": True}
 
 @app.post("/api/projects/{pid}/deploy")
