@@ -9,7 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from config import SessionLocal, settings
 from database import init_database
-from http import install_http_handlers
+from http_handlers import install_http_handlers
 from models import Deployment, DeploymentStep, Log
 from routers.auth import router as auth_router
 from routers.deployments import router as deployment_router
