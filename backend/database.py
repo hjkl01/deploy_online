@@ -32,9 +32,15 @@ def _schema_matches_models():
         "logs": {"id", "deployment_id", "step_id", "stream", "message", "created_at"},
     }
     tables = set(inspector.get_table_names()) - {"alembic_version"}
-    if tables != BASE_TABLES:
+    allowed_tables = BASE_TABLES - {"project_members"}
+    if tables not in (allowed_tables, BASE_TABLES):
         return False
-    return all(columns <= {column["name"] for column in inspector.get_columns(table)} for table, columns in expected.items())
+    for table, columns in expected.items():
+        if table == "project_members" and table not in tables:
+            continue
+        if not columns <= {column["name"] for column in inspector.get_columns(table)}:
+            return False
+    return True
 
 
 def migrate_database():
