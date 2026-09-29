@@ -22,6 +22,10 @@ def admin_count(d: Session):
     return d.query(User).filter_by(role="admin").count()
 
 
+def list_projects(d: Session):
+    return d.query(Project).order_by(Project.id.desc()).all()
+
+
 def get_project(d: Session, project_id: int):
     return d.get(Project, project_id)
 
@@ -41,6 +45,17 @@ def replace_project_children(d: Session, project: Project, steps_data, env_data)
 
 def list_deployment_steps(d: Session, deployment_id: int):
     return d.query(DeploymentStep).filter_by(deployment_id=deployment_id).order_by(DeploymentStep.position).all()
+
+
+def list_deployments(d: Session, project_id=None, status=None, page=1, page_size=20):
+    q = d.query(Deployment, Project.name, User.username).outerjoin(Project, Project.id == Deployment.project_id).outerjoin(User, User.id == Deployment.user_id)
+    if project_id is not None:
+        q = q.filter(Deployment.project_id == project_id)
+    if status is not None:
+        q = q.filter(Deployment.status == status)
+    total = q.count()
+    rows = q.order_by(Deployment.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return total, rows
 
 
 def get_deployment(d: Session, deployment_id: int):
