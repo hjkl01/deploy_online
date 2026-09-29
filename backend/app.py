@@ -58,27 +58,64 @@ async def ws(w: WebSocket, did: int):
         return
 
     d = SessionLocal()
-    job = d.get(Deployment, did)
-    rows = d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all()
-    initial_steps = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
-    d.close()
+    try:
+        job = d.get(Deployment, did)
+        rows = d.query(Log).filter_by(deployment_id=did).order_by(Log.id).all()
+        initial_steps = (
+            d.query(DeploymentStep)
+            .filter_by(deployment_id=did)
+            .order_by(DeploymentStep.position)
+            .all()
+        )
+    finally:
+        d.close()
+
     if not job:
         await w.close(code=1008)
         return
 
+    terminal_statuses = {"success", "failed", "cancelled"}
+
+    def step_payload(steps):
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "status": s.status,
+                "started_at": s.started_at,
+                "finished_at": s.finished_at,
+                "exit_code": s.exit_code,
+                "duration_ms": s.duration_ms,
+                "error": s.error,
+            }
+            for s in steps
+        ]
+
+    def step_fingerprint(steps):
+        return tuple(
+            (
+                s.id,
+                s.status,
+                s.started_at,
+                s.finished_at,
+                s.exit_code,
+                s.duration_ms,
+                s.error,
+            )
+            for s in steps
+        )
+
     await w.accept()
     try:
+        last_step_state = step_fingerprint(initial_steps)
+        last_log = rows[-1].id if rows else 0
+
         await w.send_json({
             "type": "connected",
             "deployment_id": did,
             "status": job.status,
             "exit_code": job.exit_code,
-            "steps": [
-                {"id": s.id, "name": s.name, "status": s.status, "started_at": s.started_at,
-                 "finished_at": s.finished_at, "exit_code": s.exit_code, "duration_ms": s.duration_ms,
-                 "error": s.error}
-                for s in initial_steps
-            ],
+            "steps": step_payload(initial_steps),
         })
         await w.send_json({
             "type": "snapshot",
@@ -88,15 +125,28 @@ async def ws(w: WebSocket, did: int):
             ],
         })
 
-        last_log = rows[-1].id if rows else 0
+        if job.status in terminal_statuses:
+            return
+
+        last_status = job.status
+        last_exit_code = job.exit_code
+
         while True:
             await asyncio.sleep(1)
             d = SessionLocal()
             try:
                 job = d.get(Deployment, did)
-                step_rows = d.query(DeploymentStep).filter_by(deployment_id=did).order_by(DeploymentStep.position).all()
-                new = d.query(Log).filter(Log.deployment_id == did, Log.id > last_log).order_by(Log.id).all()
-                last_log = new[-1].id if new else last_log
+                if not job:
+                    break
+
+                new = (
+                    d.query(Log)
+                    .filter(Log.deployment_id == did, Log.id > last_log)
+                    .order_by(Log.id)
+                    .all()
+                )
+                if new:
+                    last_log = new[-1].id
 
                 for x in new:
                     await w.send_json({
@@ -107,24 +157,54 @@ async def ws(w: WebSocket, did: int):
                         "message": x.message,
                     })
 
-                if job:
-                    await w.send_json({
+                # 仅查询步骤的必要状态字段；只有状态发生变化时才加载完整步骤对象。
+                current_step_state = tuple(
+                    d.query(
+                        DeploymentStep.id,
+                        DeploymentStep.status,
+                        DeploymentStep.started_at,
+                        DeploymentStep.finished_at,
+                        DeploymentStep.exit_code,
+                        DeploymentStep.duration_ms,
+                        DeploymentStep.error,
+                    )
+                    .filter_by(deployment_id=did)
+                    .order_by(DeploymentStep.position)
+                    .all()
+                )
+                steps_changed = current_step_state != last_step_state
+
+                status_changed = (
+                    job.status != last_status or job.exit_code != last_exit_code
+                )
+                if status_changed or steps_changed:
+                    message = {
                         "type": "status",
                         "status": job.status,
                         "exit_code": job.exit_code,
-                        "steps": [
-                            {"id": s.id, "name": s.name, "status": s.status, "started_at": s.started_at,
-                             "finished_at": s.finished_at, "exit_code": s.exit_code,
-                             "duration_ms": s.duration_ms, "error": s.error}
-                            for s in step_rows
-                        ],
-                    })
-                    if job.status in ("success", "failed", "cancelled"):
-                        break
+                    }
+
+                    if steps_changed:
+                        step_rows = (
+                            d.query(DeploymentStep)
+                            .filter_by(deployment_id=did)
+                            .order_by(DeploymentStep.position)
+                            .all()
+                        )
+                        message["steps"] = step_payload(step_rows)
+                        last_step_state = step_fingerprint(step_rows)
+
+                    await w.send_json(message)
+                    last_status = job.status
+                    last_exit_code = job.exit_code
+
+                if job.status in terminal_statuses:
+                    break
             finally:
                 d.close()
     except WebSocketDisconnect:
         pass
+
 
 
 @app.get("/{path:path}")
