@@ -9,6 +9,7 @@ from dependencies import dbdep, role
 from models import Deployment, Env, Project, ProjectMember, User
 from schemas import ProjectIn
 from security import encrypt_secret
+from services.permissions import require_project_view_access
 from services.repository import get_project, list_projects, project_has_deployments, replace_project_children
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -88,6 +89,7 @@ def project(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "oper
     p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
+    require_project_view_access(d, pid, u)
     x = project_out(p)
     x["steps"] = [{"id": s.id, "name": s.name, "step_type": s.step_type, "cwd": s.cwd, "command": s.command, "enabled": s.enabled, "timeout": s.timeout, "continue_on_error": s.continue_on_error, "position": s.position} for s in p.steps]
     x["environment"] = [{"id": e.id, "key": e.key, "value": "" if e.is_secret else e.value, "is_secret": e.is_secret} for e in p.envs]
@@ -141,6 +143,7 @@ def yaml_export(pid: int, d: Session = Depends(dbdep), u=Depends(role("admin", "
     p = get_project(d, pid)
     if not p:
         raise HTTPException(404, "项目不存在")
+    require_project_view_access(d, pid, u)
     return yaml.safe_dump(
         {
             "name": p.name, "description": p.description, "enabled": p.enabled, "branch": p.branch, "shell": p.shell,
