@@ -15,6 +15,15 @@ def upgrade() -> None:
     if "project_members" not in inspector.get_table_names():
         return
 
+    bind.execute(sa.text(
+        """
+        DELETE FROM project_members
+        WHERE user_id IN (
+            SELECT id FROM users WHERE role != 'operator'
+        )
+        """
+    ))
+
     member_count = bind.execute(sa.text("SELECT COUNT(*) FROM project_members")).scalar_one()
     if member_count == 0:
         bind.execute(sa.text(
