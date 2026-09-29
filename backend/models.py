@@ -33,7 +33,7 @@ class Step(Base):
 class Env(Base):
     __tablename__ = "envs"
     id = Column(Integer, primary_key=True)
-    project_id = Column(ForeignKey("projects.id"))
+    project_id = Column(ForeignKey("projects.id", ondelete="CASCADE"))
     key = Column(String(255))
     value = Column(Text, default="")
     is_secret = Column(Boolean, default=False)
@@ -60,8 +60,8 @@ class Deployment(Base):
 class DeploymentStep(Base):
     __tablename__ = "deployment_steps"
     id = Column(Integer, primary_key=True)
-    deployment_id = Column(ForeignKey("deployments.id"), index=True)
-    source_step_id = Column(Integer, index=True)
+    deployment_id = Column(ForeignKey("deployments.id", ondelete="CASCADE"), index=True)
+    source_step_id = Column(ForeignKey("steps.id", ondelete="SET NULL"), index=True)
     position = Column(Integer, default=0)
     name = Column(String(200))
     status = Column(String(30), default="pending", index=True)
