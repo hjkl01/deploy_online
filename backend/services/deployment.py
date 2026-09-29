@@ -139,7 +139,6 @@ async def run(deployment_id):
                     project_cfg,
                     env,
                     step,
-                    [cancelled],
                     lambda: asyncio.to_thread(is_cancel_requested, deployment_id),
                 )
 
