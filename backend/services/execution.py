@@ -107,6 +107,11 @@ async def execute_step(deployment_id, project_cfg, env, step, cancel_checker):
         code = 124
         was_cancelled = False
         await broker.emit(deployment_id, "stderr", f"[{name}] 超时\n", step_id, queues)
+    except asyncio.CancelledError:
+        kill_process_group(proc)
+        await proc.wait()
+        await broker.emit(deployment_id, "stderr", f"[{name}] Worker 停止，进程已终止\n", step_id, queues)
+        raise
     except Exception as exc:
         kill_process_group(proc)
         await proc.wait()
