@@ -6,8 +6,9 @@ After=network.target deploy_online.service
 Type=simple
 WorkingDirectory=%h/deploy_online/backend
 ExecStart=%h/.local/bin/uv run python worker.py
-Restart=always
+Restart=on-failure
 RestartSec=2
+TimeoutStopSec=45
 
 [Install]
 WantedBy=default.target
