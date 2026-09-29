@@ -85,12 +85,14 @@ class LogBroker:
             d = SessionLocal()
             try:
                 job = d.get(Deployment, deployment_id)
-                if not job:
-                    return
-                job.status = status
-                job.exit_code = code
-                job.finished_at = now()
-                d.commit()
+                if job:
+                    job.status = status
+                    job.exit_code = code
+                    job.finished_at = now()
+                    d.commit()
+            except Exception:
+                d.rollback()
+                raise
             except Exception:
                 d.rollback()
                 raise
