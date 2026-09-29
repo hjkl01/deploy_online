@@ -75,6 +75,7 @@ def upgrade() -> None:
         sa.Column("config_snapshot", sa.Text()),
         sa.Column("note", sa.Text()),
         sa.Column("cancel_requested", sa.Boolean()),
+        sa.Column("state_version", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("before_sha", sa.String(64)),
         sa.Column("after_sha", sa.String(64)),
         sa.Column("retry_of", sa.Integer()),
@@ -109,7 +110,7 @@ def upgrade() -> None:
     _copy_table("projects", "projects_new", ["id", "name", "description", "branch", "shell", "enabled"])
     _copy_table("steps", "steps_new", ["id", "project_id", "name", "step_type", "cwd", "command", "enabled", "timeout", "continue_on_error", "position"])
     _copy_table("envs", "envs_new", ["id", "project_id", "key", "value", "is_secret"])
-    _copy_table("deployments", "deployments_new", ["id", "project_id", "user_id", "status", "exit_code", "created_at", "started_at", "finished_at", "config_snapshot", "note", "cancel_requested", "before_sha", "after_sha", "retry_of"])
+    _copy_table("deployments", "deployments_new", ["id", "project_id", "user_id", "status", "exit_code", "created_at", "started_at", "finished_at", "config_snapshot", "note", "cancel_requested", "state_version", "before_sha", "after_sha", "retry_of"])
     _copy_table("deployment_steps", "deployment_steps_new", ["id", "deployment_id", "source_step_id", "position", "name", "status", "started_at", "finished_at", "exit_code", "duration_ms", "error"])
     _copy_table("logs", "logs_new", ["id", "deployment_id", "step_id", "stream", "message", "created_at"])
 
