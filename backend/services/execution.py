@@ -82,12 +82,15 @@ async def execute_step(deployment_id, project_cfg, env, step, cancel_checker):
             )
 
     async def watch_cancel():
-        while proc.returncode is None:
-            await asyncio.sleep(0.5)
-            if await cancel_checker():
-                kill_process_group(proc)
-                return True
-        return False
+        try:
+            while proc.returncode is None:
+                await asyncio.sleep(0.5)
+                if await cancel_checker():
+                    kill_process_group(proc)
+                    return True
+            return False
+        except asyncio.CancelledError:
+            raise
 
     watcher = asyncio.create_task(watch_cancel())
     try:
@@ -99,8 +102,13 @@ async def execute_step(deployment_id, project_cfg, env, step, cancel_checker):
             ),
             timeout=max(1, int(step.get("timeout") or 3600)),
         )
-        was_cancelled = watcher.done() and watcher.result()
-        code = 130 if was_cancelled else proc.returncode
+
+        was_cancelled = watcher.done() and not watcher.cancelled() and watcher.result()
+        if not was_cancelled and await cancel_checker():
+            was_cancelled = True
+            code = 130
+        else:
+            code = 130 if was_cancelled else proc.returncode
     except asyncio.TimeoutError:
         kill_process_group(proc)
         await proc.wait()
@@ -120,6 +128,7 @@ async def execute_step(deployment_id, project_cfg, env, step, cancel_checker):
         await broker.emit(deployment_id, "stderr", f"[{name}] {exc}\n", step_id, queues)
     finally:
         watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
 
     if step_type == "git_pull" and code == 0:
         return code, False, await git_sha(cwd)
