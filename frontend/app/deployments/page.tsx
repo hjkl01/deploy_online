@@ -51,10 +51,10 @@ function Detail({id}:{id:string}){
   const wsBase=WS||((window.location.protocol==="https:"?"wss://":"ws://")+window.location.host);
   const connect=()=>{if(closed)return;socket=new WebSocket(wsBase+"/ws/deployments/"+id);
    socket.onmessage=e=>{const data=JSON.parse(e.data);
-    if(data.type==="connected"){statusRef.current=data.status;setStatus(data.status);if(data.status==="success"||data.status==="failed"){socket?.close();return}}
+    if(data.type==="connected"){statusRef.current=data.status;setStatus(data.status);setInfo((v:any)=>v?{...v,status:data.status,exit_code:data.exit_code,steps:data.steps||v.steps}:v);if(data.status==="success"||data.status==="failed"||data.status==="cancelled"){socket?.close();return}}
     if(data.type==="snapshot"){const ids=new Set<number>();const text=data.logs.map((item:any)=>{ids.add(item.id);return item.message}).join("");logIdsRef.current=ids;setLogs(text)}
     if(data.type==="log"){if(data.id!=null&&logIdsRef.current.has(data.id))return;if(data.id!=null)logIdsRef.current.add(data.id);setLogs(v=>v+data.message)}
-    if(data.type==="status"){statusRef.current=data.status;setStatus(data.status);setInfo((v:any)=>v?{...v,status:data.status,exit_code:data.exit_code}:v);if(data.status==="success"||data.status==="failed")socket?.close()}
+    if(data.type==="status"){statusRef.current=data.status;setStatus(data.status);setInfo((v:any)=>v?{...v,status:data.status,exit_code:data.exit_code,steps:data.steps||v.steps}:v);if(data.status==="success"||data.status==="failed"||data.status==="cancelled")socket?.close()}}
    };
    socket.onclose=()=>{if(!closed&&statusRef.current!=="success"&&statusRef.current!=="failed")timer=setTimeout(connect,1500)};
   };
