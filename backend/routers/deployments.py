@@ -7,7 +7,7 @@ from config import now
 from dependencies import dbdep, role, user
 from models import Deployment, DeploymentStep, Log, Project, User
 from services.deployment import snapshot_project
-from services.repository import get_deployment, get_deployment_with_names, list_deployment_logs, list_deployment_steps
+from services.repository import get_deployment, get_deployment_with_names, list_deployment_logs, list_deployment_steps, list_deployments
 
 router = APIRouter(prefix="/api", tags=["deployments"])
 
@@ -33,13 +33,7 @@ def deployments(project_id: int | None = None, status: str | None = None, page: 
     page, page_size = max(1, page), max(1, min(page_size, 100))
     if status is not None and status not in ("pending", "running", "success", "failed", "cancelled"):
         raise HTTPException(400, "状态无效")
-    q = d.query(Deployment, Project.name, User.username).outerjoin(Project, Project.id == Deployment.project_id).outerjoin(User, User.id == Deployment.user_id)
-    if project_id is not None:
-        q = q.filter(Deployment.project_id == project_id)
-    if status is not None:
-        q = q.filter(Deployment.status == status)
-    total = q.count()
-    rows = q.order_by(Deployment.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    total, rows = list_deployments(d, project_id, status, page, page_size)
     return {"total": total, "page": page, "page_size": page_size, "items": [
         {"id": j.id, "project_id": j.project_id, "project_name": project_name or f"项目 #{j.project_id}", "user_id": j.user_id, "username": username or "-", "status": j.status, "exit_code": j.exit_code, "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at}
         for j, project_name, username in rows
